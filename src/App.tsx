@@ -12,25 +12,61 @@ import {
   Play,
   RotateCcw,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import { PreviewCanvas } from "./components/PreviewCanvas";
 import { AiAssetGenerator } from "./components/AiAssetGenerator";
+import { CharacterPortrait } from "./components/CharacterPortrait";
+import { AssetPreviewStage } from "./components/AssetPreviewStage";
 import { sampleLibrary, sampleProject } from "./data/sampleProject";
 import { getActiveSegment } from "./engine/timeline";
 import { importImageFile, importSceneJsonFile, importSpriteSheetJsonFile } from "./importers/importers";
 import { buildAssetManifestExport, buildProjectExport, downloadJson } from "./utils/exporters";
 import { api } from "./api/client";
+import {
+  assetCategoryLabels,
+  assetScopeLabels,
+  assetTypeLabels,
+  cameraModeLabels,
+  labelFor,
+  sourceKindLabels,
+  timelineEventTypeLabels,
+  transitionLabels,
+} from "./i18n/labels";
 import type { AssetLibrary, AssetManifest, AssetScope, AssetType, Chapter, Project, Segment, TimelineEvent } from "./types/schema";
 
 const imageTypes: AssetType[] = ["character", "scene", "prop", "expression", "effect", "foreground", "background"];
 type ModuleId = "assets" | "project" | "export";
 
 const modules: Array<{ id: ModuleId; label: string; description: string; icon: typeof Boxes }> = [
-  { id: "assets", label: "资产库管理", description: "导入、分类、预览和登记 Manifest", icon: Boxes },
+  { id: "assets", label: "通用资产库", description: "导入、分类、预览和登记通用素材 Manifest", icon: Boxes },
   { id: "project", label: "项目管理", description: "项目、章节、片段、参数编辑和片段渲染编辑", icon: FileJson },
   { id: "export", label: "导出与 AI", description: "项目 JSON、资产配置和 AI Schema 预留", icon: Sparkles },
 ];
+
+type PendingImport =
+  | { kind: "image"; file: File; scope: AssetScope }
+  | { kind: "spritesheet"; file: File; scope: AssetScope };
+
+function collectTimelineUsedAssetIds(project: Project): Set<string> {
+  const ids = new Set<string>();
+  for (const chapter of project.chapters) {
+    if (chapter.sceneId) ids.add(chapter.sceneId);
+    if (chapter.bgm) ids.add(chapter.bgm);
+    for (const characterId of chapter.characters) ids.add(characterId);
+    for (const segmentItem of chapter.segments) {
+      for (const ev of segmentItem.timeline) {
+        if ("target" in ev && typeof ev.target === "string") ids.add(ev.target);
+        if ("sceneId" in ev && typeof (ev as { sceneId?: unknown }).sceneId === "string") ids.add((ev as { sceneId: string }).sceneId);
+        if ("propId" in ev && typeof (ev as { propId?: unknown }).propId === "string") ids.add((ev as { propId: string }).propId);
+        if ("effectId" in ev && typeof (ev as { effectId?: unknown }).effectId === "string") ids.add((ev as { effectId: string }).effectId);
+        if ("assetId" in ev && typeof (ev as { assetId?: unknown }).assetId === "string") ids.add((ev as { assetId: string }).assetId);
+      }
+    }
+  }
+  return ids;
+}
 
 export function App() {
   const [project, setProject] = useState<Project>(sampleProject);
@@ -38,13 +74,12 @@ export function App() {
   const [activeModule, setActiveModule] = useState<ModuleId>("assets");
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [assetType, setAssetType] = useState<AssetType>("character");
-  const [scope, setScope] = useState<AssetScope>("project");
   const [notice, setNotice] = useState("已载入最小演示项目：客厅、两个角色、道具、镜头、表情和特效。");
   const [selectedAssetId, setSelectedAssetId] = useState("character_child_001");
   const [assetPreviewOpen, setAssetPreviewOpen] = useState(false);
   const [segmentEditorOpen, setSegmentEditorOpen] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState<null | { scope: AssetScope }>(null);
+  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
 
   const apiReadyRef = useRef(false);
 
@@ -120,10 +155,9 @@ export function App() {
     return () => cancelAnimationFrame(frame);
   }, [playing, segment.duration]);
 
-  async function handleImageImport(file: File | undefined) {
-    if (!file) return;
+  async function handleImageImport(file: File, type: AssetType, scope: AssetScope) {
     try {
-      const manifest = await importImageFile(file, assetType, scope);
+      const manifest = await importImageFile(file, type, scope);
       await api.saveAsset(manifest);
       setLibrary((current) =>
         scope === "global"
@@ -133,7 +167,6 @@ export function App() {
       if (scope === "project") setProject((current) => ({ ...current, assetRefs: [...new Set([manifest.assetId, ...current.assetRefs])] }));
       setSelectedAssetId(manifest.assetId);
       setAssetPreviewOpen(true);
-      setActiveModule("assets");
       setNotice(`已导入 ${file.name}，已入库 ${manifest.assetId}。`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "导入失败。");
@@ -153,22 +186,64 @@ export function App() {
     }
   }
 
-  async function handleSpriteSheetImport(file: File | undefined) {
-    if (!file) return;
+  async function handleSpriteSheetImport(file: File, type: AssetType, scope: AssetScope) {
+    const narrowed: "action" | "effect" = type === "action" ? "action" : "effect";
     try {
-      const manifest = await importSpriteSheetJsonFile(file, scope, "effect");
+      const manifest = await importSpriteSheetJsonFile(file, scope, narrowed);
       await api.saveAsset(manifest);
       setLibrary((current) =>
         scope === "global"
           ? { ...current, globalAssets: [manifest, ...current.globalAssets] }
           : { ...current, projectAssets: [manifest, ...current.projectAssets] },
       );
+      if (scope === "project") setProject((current) => ({ ...current, assetRefs: [...new Set([manifest.assetId, ...current.assetRefs])] }));
       setSelectedAssetId(manifest.assetId);
       setAssetPreviewOpen(true);
-      setActiveModule("assets");
-      setNotice(`已入库图集 JSON，登记为 ${manifest.type} 资产。`);
+      setNotice(`已入库图集 JSON，登记为 ${labelFor(assetTypeLabels, manifest.type)} 资产。`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "图集 JSON 导入失败。");
+    }
+  }
+
+  function queueImport(kind: PendingImport["kind"], file: File | undefined, scope: AssetScope) {
+    if (!file) return;
+    setPendingImport({ kind, file, scope } as PendingImport);
+  }
+
+  async function confirmPendingImport(type: AssetType) {
+    const pending = pendingImport;
+    if (!pending) return;
+    setPendingImport(null);
+    if (pending.kind === "image") await handleImageImport(pending.file, type, pending.scope);
+    else if (pending.kind === "spritesheet") await handleSpriteSheetImport(pending.file, type, pending.scope);
+  }
+
+  async function handleDeleteAsset(assetId: string) {
+    const asset = [...library.globalAssets, ...library.projectAssets].find((item) => item.assetId === assetId);
+    if (!asset) return;
+    if (asset.scope === "project") {
+      const usedIds = collectTimelineUsedAssetIds(project);
+      if (usedIds.has(assetId)) {
+        setNotice(`「${asset.name}」仍被时间线引用，先移除相关事件再删除。`);
+        return;
+      }
+    }
+    if (!window.confirm(`删除资产「${asset.name}」？该操作不可撤销。`)) return;
+    try {
+      await api.deleteAsset(assetId);
+      setLibrary((current) => ({
+        ...current,
+        globalAssets: current.globalAssets.filter((item) => item.assetId !== assetId),
+        projectAssets: current.projectAssets.filter((item) => item.assetId !== assetId),
+      }));
+      setProject((current) => ({ ...current, assetRefs: current.assetRefs.filter((ref) => ref !== assetId) }));
+      if (selectedAssetId === assetId) {
+        setSelectedAssetId("");
+        setAssetPreviewOpen(false);
+      }
+      setNotice(`已删除资产「${asset.name}」。`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "删除失败。");
     }
   }
 
@@ -330,17 +405,14 @@ export function App() {
         <div className="module-content">
           {activeModule === "assets" ? (
             <AssetLibraryModule
-              assetType={assetType}
-              scope={scope}
               notice={notice}
-              library={library}
+              globalAssets={library.globalAssets}
               selectedAssetId={selectedAssetId}
-              onAssetTypeChange={setAssetType}
-              onScopeChange={setScope}
-              onImageImport={handleImageImport}
+              onImageImport={(file) => queueImport("image", file, "global")}
               onSceneImport={handleSceneImport}
-              onSpriteSheetImport={handleSpriteSheetImport}
-              onOpenAi={() => setAiOpen(true)}
+              onSpriteSheetImport={(file) => queueImport("spritesheet", file, "global")}
+              onOpenAi={() => setAiOpen({ scope: "global" })}
+              onDeleteAsset={handleDeleteAsset}
               onSelectAsset={(assetId) => {
                 setSelectedAssetId(assetId);
                 setAssetPreviewOpen(true);
@@ -361,6 +433,14 @@ export function App() {
               onUpdateProjectConfig={updateProjectConfig}
               onUpdateChapter={updateChapter}
               onUpdateSegment={updateSegment}
+              onImageImport={(file) => queueImport("image", file, "project")}
+              onSpriteSheetImport={(file) => queueImport("spritesheet", file, "project")}
+              onOpenAi={() => setAiOpen({ scope: "project" })}
+              onDeleteAsset={handleDeleteAsset}
+              onSelectAsset={(assetId) => {
+                setSelectedAssetId(assetId);
+                setAssetPreviewOpen(true);
+              }}
             />
           ) : null}
           {activeModule === "export" ? <ExportModule project={project} library={library} /> : null}
@@ -385,12 +465,27 @@ export function App() {
         />
       ) : null}
       {assetPreviewOpen ? <AssetPreviewModal asset={selectedAsset} onClose={() => setAssetPreviewOpen(false)} /> : null}
+      {pendingImport ? (
+        <ImportTypeModal
+          pending={pendingImport}
+          onCancel={() => setPendingImport(null)}
+          onConfirm={confirmPendingImport}
+        />
+      ) : null}
       {aiOpen ? (
         <AiAssetGenerator
-          defaultType={assetType}
-          defaultScope={scope}
-          onClose={() => setAiOpen(false)}
-          onRegistered={() => {
+          defaultType="character"
+          defaultScope={aiOpen.scope}
+          onClose={() => setAiOpen(null)}
+          onRegistered={(manifest) => {
+            if (manifest.scope === "project") {
+              setProject((current) => ({
+                ...current,
+                assetRefs: [...new Set([manifest.assetId, ...current.assetRefs])],
+              }));
+            }
+            setSelectedAssetId(manifest.assetId);
+            setNotice(`AI 已入库资产「${manifest.name}」。`);
             void reloadLibraryFromApi();
           }}
         />
@@ -400,51 +495,32 @@ export function App() {
 }
 
 function AssetLibraryModule({
-  assetType,
-  scope,
   notice,
-  library,
+  globalAssets,
   selectedAssetId,
-  onAssetTypeChange,
-  onScopeChange,
   onImageImport,
   onSceneImport,
   onSpriteSheetImport,
   onSelectAsset,
   onOpenAi,
+  onDeleteAsset,
 }: {
-  assetType: AssetType;
-  scope: AssetScope;
   notice: string;
-  library: AssetLibrary;
+  globalAssets: AssetManifest[];
   selectedAssetId: string;
-  onAssetTypeChange: (type: AssetType) => void;
-  onScopeChange: (scope: AssetScope) => void;
   onImageImport: (file: File | undefined) => void;
   onSceneImport: (file: File | undefined) => void;
   onSpriteSheetImport: (file: File | undefined) => void;
   onSelectAsset: (assetId: string) => void;
   onOpenAi: () => void;
+  onDeleteAsset: (assetId: string) => void;
 }) {
   return (
     <section className="asset-library-layout">
-      <section className="panel asset-import-toolbar">
+      <section className="panel asset-import-toolbar slim">
         <div className="toolbar-title">
           <Boxes size={18} />
-          <span>素材导入</span>
-        </div>
-        <div className="asset-import-controls">
-          <select value={assetType} onChange={(event) => onAssetTypeChange(event.target.value as AssetType)}>
-            {imageTypes.map((type) => (
-              <option key={type} value={type}>
-                {type}
-              </option>
-            ))}
-          </select>
-          <select value={scope} onChange={(event) => onScopeChange(event.target.value as AssetScope)}>
-            <option value="project">项目</option>
-            <option value="global">通用</option>
-          </select>
+          <span>通用素材导入</span>
         </div>
         <label className="file-button">
           <ImagePlus size={17} />
@@ -469,10 +545,11 @@ function AssetLibraryModule({
       </section>
 
       <AssetTypeGallery
-        globalAssets={library.globalAssets}
-        projectAssets={library.projectAssets}
+        title="按类型浏览（通用）"
+        assets={globalAssets}
         selectedAssetId={selectedAssetId}
         onSelect={onSelectAsset}
+        onDelete={onDeleteAsset}
       />
     </section>
   );
@@ -491,6 +568,11 @@ function ProjectModule({
   onUpdateProjectConfig,
   onUpdateChapter,
   onUpdateSegment,
+  onImageImport,
+  onSpriteSheetImport,
+  onOpenAi,
+  onDeleteAsset,
+  onSelectAsset,
 }: {
   project: Project;
   library: AssetLibrary;
@@ -504,13 +586,75 @@ function ProjectModule({
   onUpdateProjectConfig: (patch: Partial<Project["config"]>) => void;
   onUpdateChapter: (chapterId: string, patch: Partial<Chapter>) => void;
   onUpdateSegment: (chapterId: string, segmentId: string, patch: Partial<Segment>) => void;
+  onImageImport: (file: File | undefined) => void;
+  onSpriteSheetImport: (file: File | undefined) => void;
+  onOpenAi: () => void;
+  onDeleteAsset: (assetId: string) => void;
+  onSelectAsset: (assetId: string) => void;
 }) {
   const allAssets = [...library.globalAssets, ...library.projectAssets];
   const activeChapter = project.chapters.find((chapter) => chapter.chapterId === activeChapterId) ?? project.chapters[0];
   const activeSegment = activeChapter.segments.find((segmentItem) => segmentItem.segmentId === activeSegmentId) ?? activeChapter.segments[0];
+  const usedIds = useMemo(() => collectTimelineUsedAssetIds(project), [project]);
+  const [activeTab, setActiveTab] = useState<"structure" | "assets">("structure");
+
+  const subTabs: Array<{ id: "structure" | "assets"; label: string; hint: string }> = [
+    { id: "structure", label: "项目结构", hint: "项目参数 · 章节 · 片段 · 时间线" },
+    { id: "assets", label: "项目资产", hint: `${library.projectAssets.length} 个项目资产` },
+  ];
 
   return (
-    <section className="module-grid project-module-grid">
+    <section className="project-module-shell">
+      <nav className="project-subtabs" aria-label="项目管理子模块">
+        {subTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={activeTab === tab.id ? "is-active" : ""}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            <strong>{tab.label}</strong>
+            <small>{tab.hint}</small>
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === "assets" ? (
+        <section className="data-panel project-assets-panel">
+          <div className="panel-title">
+            <span>项目资产</span>
+            <small>{library.projectAssets.length}</small>
+          </div>
+          <div className="project-assets-toolbar">
+            <label className="file-button">
+              <ImagePlus size={16} />
+              <span>导入图片</span>
+              <input type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={(event) => onImageImport(event.target.files?.[0])} />
+            </label>
+            <label className="file-button">
+              <FolderInput size={16} />
+              <span>导入图集 JSON</span>
+              <input type="file" accept=".json,application/json" onChange={(event) => onSpriteSheetImport(event.target.files?.[0])} />
+            </label>
+            <button type="button" className="file-button ai-trigger" onClick={onOpenAi}>
+              <Sparkles size={16} />
+              <span>AI 生成资产</span>
+            </button>
+          </div>
+          <AssetTypeGallery
+            title="按类型浏览（项目）"
+            assets={library.projectAssets}
+            selectedAssetId=""
+            onSelect={onSelectAsset}
+            onDelete={onDeleteAsset}
+            isDeletable={(asset) => !usedIds.has(asset.assetId)}
+            emptyHint="暂无项目资产，使用上方按钮导入或 AI 生成。"
+          />
+        </section>
+      ) : null}
+
+      {activeTab === "structure" ? (
+        <section className="module-grid project-module-grid">
       <section className="data-panel">
         <h3>项目参数</h3>
         <div className="form-grid">
@@ -564,7 +708,7 @@ function ProjectModule({
               <button type="button" onClick={() => onSelectSegment(chapter.chapterId, chapter.segments[0]?.segmentId ?? "")}>
                 <strong>{chapter.title}</strong>
                 <span>{chapter.sceneId}</span>
-                <small>{chapter.transition.type} · {chapter.segments.length} 片段 · {chapter.characters.length} 角色</small>
+                <small>{labelFor(transitionLabels, chapter.transition.type)} · {chapter.segments.length} 片段 · {chapter.characters.length} 角色</small>
               </button>
               <div className="segment-stack">
                 {chapter.segments.map((segmentItem) => (
@@ -618,13 +762,11 @@ function ProjectModule({
                   })
                 }
               >
-                <option value="none">none</option>
-                <option value="cut">cut</option>
-                <option value="fadeIn">fadeIn</option>
-                <option value="fadeOut">fadeOut</option>
-                <option value="fadeToBlack">fadeToBlack</option>
-                <option value="dissolve">dissolve</option>
-                <option value="titleCard">titleCard</option>
+                {(Object.keys(transitionLabels) as Array<Chapter["transition"]["type"]>).map((value) => (
+                  <option key={value} value={value}>
+                    {transitionLabels[value]}
+                  </option>
+                ))}
               </select>
             </label>
             <label>
@@ -670,13 +812,15 @@ function ProjectModule({
               return (
                 <article key={assetId} className="ref-row">
                   <strong>{asset?.name ?? assetId}</strong>
-                  <span>{asset?.type ?? "scene"} · {assetId}</span>
+                  <span>{labelFor(assetTypeLabels, asset?.type ?? "scene")} · {assetId}</span>
                 </article>
               );
             })}
           </div>
         </details>
       </section>
+        </section>
+      ) : null}
     </section>
   );
 }
@@ -712,6 +856,14 @@ function SegmentEditorModal({
   function updateTimelineEvent(eventIndex: number, nextEvent: TimelineEvent) {
     const nextTimeline = segment.timeline.map((eventItem, index) => (index === eventIndex ? nextEvent : eventItem));
     onUpdateSegment(chapter.chapterId, segment.segmentId, { timeline: nextTimeline });
+  }
+
+  function selectAndSeek(eventIndex: number) {
+    setSelectedEventIndex(eventIndex);
+    const target = segment.timeline[eventIndex];
+    if (!target) return;
+    onPlayingChange(false);
+    onTimeChange(Math.min(Math.max(target.time, 0), segment.duration));
   }
 
   return (
@@ -757,14 +909,13 @@ function SegmentEditorModal({
               >
                 <RotateCcw size={19} />
               </button>
-              <input
-                aria-label="时间线进度"
-                type="range"
-                min={0}
-                max={segment.duration}
-                step={0.05}
-                value={time}
-                onChange={(event) => onTimeChange(Number(event.target.value))}
+              <TimelineScrubber
+                duration={segment.duration}
+                time={time}
+                events={segment.timeline}
+                selectedEventIndex={selectedEventIndex}
+                onTimeChange={onTimeChange}
+                onSelectEvent={selectAndSeek}
               />
               <strong>{time.toFixed(1)}s</strong>
               <span>/ {segment.duration}s</span>
@@ -818,7 +969,7 @@ function SegmentEditorModal({
                 <span>{segment.name}</span>
                 <span>{chapter.sceneId}</span>
               </div>
-              <InlineTimelineEvents events={segment.timeline} selectedEventIndex={selectedEventIndex} onSelectEvent={setSelectedEventIndex} />
+              <InlineTimelineEvents events={segment.timeline} selectedEventIndex={selectedEventIndex} onSelectEvent={selectAndSeek} />
               <TimelineEventEditor
                 event={selectedEvent}
                 eventIndex={selectedEventIndex}
@@ -858,58 +1009,134 @@ function ExportModule({ project, library }: { project: Project; library: AssetLi
 }
 
 function AssetTypeGallery({
-  globalAssets,
-  projectAssets,
+  title,
+  assets,
   selectedAssetId,
   onSelect,
+  onDelete,
+  isDeletable,
+  emptyHint,
 }: {
-  globalAssets: AssetManifest[];
-  projectAssets: AssetManifest[];
+  title: string;
+  assets: AssetManifest[];
   selectedAssetId: string;
   onSelect: (assetId: string) => void;
+  onDelete: (assetId: string) => void;
+  isDeletable?: (asset: AssetManifest) => boolean;
+  emptyHint?: string;
 }) {
-  const assets = [...globalAssets, ...projectAssets];
   const orderedTypes = getOrderedAssetTypes(assets);
 
   return (
     <section className="panel asset-type-gallery">
       <div className="panel-title">
-        <span>按类型浏览</span>
+        <span>{title}</span>
         <small>{assets.length}</small>
       </div>
+      {assets.length === 0 && emptyHint ? <p className="notice inline-notice">{emptyHint}</p> : null}
       <div className="asset-type-scroll">
         {orderedTypes.map((type) => (
           <section key={type} className="asset-type-section">
             <div className="asset-type-heading">
-              <strong>{type}</strong>
+              <strong>{labelFor(assetTypeLabels, type)}</strong>
               <span>{assets.filter((asset) => asset.type === type).length}</span>
             </div>
             <div className="asset-card-grid">
               {assets
                 .filter((asset) => asset.type === type)
-                .map((asset) => (
-                  <button
-                    key={asset.assetId}
-                    type="button"
-                    className={`asset-card ${asset.assetId === selectedAssetId ? "is-selected" : ""}`}
-                    onClick={() => onSelect(asset.assetId)}
-                    title={`预览 ${asset.name}`}
-                  >
-                    <div className="asset-card-thumb">
-                      <AssetVisual asset={asset} />
+                .map((asset) => {
+                  const deletable = isDeletable ? isDeletable(asset) : true;
+                  return (
+                    <div
+                      key={asset.assetId}
+                      className={`asset-card ${asset.assetId === selectedAssetId ? "is-selected" : ""}`}
+                    >
+                      <button
+                        type="button"
+                        className="asset-card-body"
+                        onClick={() => onSelect(asset.assetId)}
+                        title={`预览 ${asset.name}`}
+                      >
+                        <div className="asset-card-thumb">
+                          <AssetVisual asset={asset} />
+                        </div>
+                        <div className="asset-card-meta">
+                          <strong>{asset.name}</strong>
+                          <span>{labelFor(assetScopeLabels, asset.scope)} · {asset.source.format}</span>
+                        </div>
+                        <Eye size={15} className="asset-card-eye" />
+                      </button>
+                      <button
+                        type="button"
+                        className="asset-card-delete"
+                        disabled={!deletable}
+                        title={deletable ? `删除 ${asset.name}` : "仍被时间线引用，无法删除"}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onDelete(asset.assetId);
+                        }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </div>
-                    <div className="asset-card-meta">
-                      <strong>{asset.name}</strong>
-                      <span>{asset.scope} · {asset.source.format}</span>
-                    </div>
-                    <Eye size={15} />
-                  </button>
-                ))}
+                  );
+                })}
             </div>
           </section>
         ))}
       </div>
     </section>
+  );
+}
+
+function ImportTypeModal({
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  pending: PendingImport;
+  onCancel: () => void;
+  onConfirm: (type: AssetType) => void;
+}) {
+  const initialType: AssetType = pending.kind === "spritesheet" ? "effect" : "character";
+  const [type, setType] = useState<AssetType>(initialType);
+  const kindLabel = pending.kind === "image" ? "图片" : "图集 JSON";
+  const scopeLabel = labelFor(assetScopeLabels, pending.scope);
+  const options: AssetType[] = pending.kind === "spritesheet" ? ["effect", "action"] : imageTypes;
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onCancel}>
+      <div className="modal import-type-modal" role="dialog" aria-modal="true" aria-label="选择导入分类" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="modal-header">
+          <div className="modal-title">
+            <FolderInput size={18} />
+            <span>选择导入分类</span>
+          </div>
+          <button type="button" className="icon-button" onClick={onCancel} title="取消">
+            <X size={16} />
+          </button>
+        </header>
+        <section className="import-type-form">
+          <p className="muted">
+            将 <strong>{pending.file.name}</strong> 作为「{scopeLabel}」{kindLabel}入库，请选择资产分类。
+          </p>
+          <label>
+            <span>资产分类</span>
+            <select value={type} onChange={(event) => setType(event.target.value as AssetType)}>
+              {options.map((value) => (
+                <option key={value} value={value}>
+                  {assetTypeLabels[value]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="modal-actions">
+            <button type="button" onClick={onCancel}>取消</button>
+            <button type="button" className="primary" onClick={() => onConfirm(type)}>确认导入</button>
+          </div>
+        </section>
+      </div>
+    </div>
   );
 }
 
@@ -932,13 +1159,19 @@ function AssetPreviewModal({ asset, onClose }: { asset: AssetManifest | null; on
           </button>
         </header>
 
-        <AssetVisual asset={asset} />
+        {asset.metadata && (asset.metadata as Record<string, unknown>).shape ? (
+          <figure className="asset-visual character-visual">
+            <AssetPreviewStage asset={asset} />
+          </figure>
+        ) : (
+          <AssetVisual asset={asset} />
+        )}
 
         <section className="asset-preview-section">
           <div className="asset-chip-row">
-            <span>{asset.scope}</span>
-            <span>{asset.category}</span>
-            <span>{asset.type}</span>
+            <span>{labelFor(assetScopeLabels, asset.scope)}</span>
+            <span>{labelFor(assetCategoryLabels, asset.category)}</span>
+            <span>{labelFor(assetTypeLabels, asset.type)}</span>
             <span>{asset.source.format}</span>
           </div>
         </section>
@@ -948,7 +1181,7 @@ function AssetPreviewModal({ asset, onClose }: { asset: AssetManifest | null; on
           <dl className="asset-fields">
             <div>
               <dt>来源</dt>
-              <dd>{asset.source.kind} · {asset.source.originalFile}</dd>
+              <dd>{labelFor(sourceKindLabels, asset.source.kind)} · {asset.source.originalFile}</dd>
             </div>
             <div>
               <dt>授权</dt>
@@ -1001,6 +1234,14 @@ function AssetVisual({ asset }: { asset: AssetManifest }) {
     );
   }
 
+  if (asset.metadata && (asset.metadata as Record<string, unknown>).shape) {
+    return (
+      <figure className="asset-visual character-visual">
+        <CharacterPortrait asset={asset} />
+      </figure>
+    );
+  }
+
   const palette = (asset.metadata.palette ?? {}) as Record<string, string>;
   const style = {
     "--preview-body": palette.body ?? (asset.type === "scene" ? "#7ea9a0" : "#3d6f84"),
@@ -1011,7 +1252,7 @@ function AssetVisual({ asset }: { asset: AssetManifest }) {
   return (
     <figure className={`asset-visual procedural-${asset.type}`} style={style}>
       <div className="procedural-preview">
-        <span>{asset.type}</span>
+        <span>{labelFor(assetTypeLabels, asset.type)}</span>
       </div>
     </figure>
   );
@@ -1030,7 +1271,7 @@ function ProjectStructure({ project }: { project: Project }) {
       {project.chapters.map((chapter) => (
         <div key={chapter.chapterId} className="chapter-line">
           <strong>{chapter.title}</strong>
-          <span>{chapter.transition.type} · {chapter.segments.length} 片段</span>
+          <span>{labelFor(transitionLabels, chapter.transition.type)} · {chapter.segments.length} 片段</span>
         </div>
       ))}
     </section>
@@ -1043,6 +1284,105 @@ function TimelinePanel({ events }: { events: TimelineEvent[] }) {
       <h3>时间线事件</h3>
       <InlineTimelineEvents events={events} />
     </section>
+  );
+}
+
+const SCRUBBER_LANES: Array<{
+  id: "scene" | "character" | "audio";
+  label: string;
+  types: ReadonlyArray<TimelineEvent["type"]>;
+}> = [
+  { id: "scene", label: "场景 / 镜头 / 特效", types: ["sceneChange", "cameraChange", "effectPlay"] },
+  {
+    id: "character",
+    label: "角色",
+    types: ["characterAppear", "characterDisappear", "characterMove", "characterAction", "expressionChange", "propChange"],
+  },
+  { id: "audio", label: "对白 / 字幕 / 音频", types: ["dialogue", "narration", "subtitle", "bgmPlay", "soundEffect"] },
+];
+
+function getEventLane(type: TimelineEvent["type"]): "scene" | "character" | "audio" {
+  for (const lane of SCRUBBER_LANES) {
+    if (lane.types.includes(type)) return lane.id;
+  }
+  return "character";
+}
+
+function getEventDuration(event: TimelineEvent): number {
+  if (event.type === "subtitle" || event.type === "dialogue" || event.type === "narration") return event.duration;
+  if (event.type === "characterMove") return event.duration;
+  if (event.type === "effectPlay") return event.duration;
+  if (event.type === "cameraChange") return event.camera.duration;
+  return 0;
+}
+
+function TimelineScrubber({
+  duration,
+  time,
+  events,
+  selectedEventIndex,
+  onTimeChange,
+  onSelectEvent,
+}: {
+  duration: number;
+  time: number;
+  events: TimelineEvent[];
+  selectedEventIndex: number;
+  onTimeChange: (value: number) => void;
+  onSelectEvent: (eventIndex: number) => void;
+}) {
+  const safeDuration = duration > 0 ? duration : 1;
+  return (
+    <div className="scrubber">
+      <input
+        aria-label="时间线进度"
+        type="range"
+        min={0}
+        max={duration}
+        step={0.05}
+        value={time}
+        onChange={(event) => onTimeChange(Number(event.target.value))}
+      />
+      <div className="scrubber-lanes" aria-hidden="false">
+        {SCRUBBER_LANES.map((lane) => {
+          const items = events
+            .map((event, index) => ({ event, index }))
+            .filter(({ event }) => getEventLane(event.type) === lane.id);
+          return (
+            <div key={lane.id} className={`scrubber-lane scrubber-lane-${lane.id}`} title={lane.label}>
+              {items.map(({ event, index }) => {
+                const startPct = Math.min(100, Math.max(0, (event.time / safeDuration) * 100));
+                const dur = getEventDuration(event);
+                const widthPct = dur > 0 ? Math.min(100 - startPct, (dur / safeDuration) * 100) : 0;
+                const isSelected = index === selectedEventIndex;
+                const label = labelFor(timelineEventTypeLabels, event.type);
+                const tooltip = dur > 0
+                  ? `${event.time.toFixed(1)}s ~ ${(event.time + dur).toFixed(1)}s · ${label}`
+                  : `${event.time.toFixed(1)}s · ${label}`;
+                return (
+                  <button
+                    key={`lane-${lane.id}-${index}-${event.time}-${event.type}`}
+                    type="button"
+                    className={`scrubber-lane-item${isSelected ? " is-selected" : ""}${widthPct > 0 ? " has-duration" : ""}`}
+                    style={{
+                      left: `${startPct}%`,
+                      width: widthPct > 0 ? `${widthPct}%` : undefined,
+                    }}
+                    title={tooltip}
+                    onClick={(clickEvent) => {
+                      clickEvent.stopPropagation();
+                      onSelectEvent(index);
+                    }}
+                  >
+                    <span className="sr-only">{tooltip}</span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -1070,7 +1410,7 @@ function InlineTimelineEvents({
         >
           <time>{event.time.toFixed(1)}s</time>
           <div>
-            <strong>{event.type}</strong>
+            <strong>{labelFor(timelineEventTypeLabels, event.type)}</strong>
             <span>{describeEvent(event)}</span>
           </div>
         </button>
@@ -1103,7 +1443,7 @@ function TimelineEventEditor({
     <section className="event-editor">
       <div className="panel-title">
         <span>事件 #{eventIndex + 1}</span>
-        <small>{currentEvent.type}</small>
+        <small>{labelFor(timelineEventTypeLabels, currentEvent.type)}</small>
       </div>
       <div className="form-grid">
         <div className="field-row">
@@ -1113,7 +1453,7 @@ function TimelineEventEditor({
           </label>
           <label>
             <span>类型</span>
-            <input value={currentEvent.type} readOnly />
+            <input value={labelFor(timelineEventTypeLabels, currentEvent.type)} readOnly title={currentEvent.type} />
           </label>
         </div>
 
@@ -1299,12 +1639,12 @@ function Metric({ label, value }: { label: string; value: number }) {
 function describeEvent(event: TimelineEvent) {
   if ("target" in event) return event.target;
   if (event.type === "sceneChange") return event.sceneId;
-  if (event.type === "cameraChange") return event.camera.mode;
+  if (event.type === "cameraChange") return labelFor(cameraModeLabels, event.camera.mode);
   if (event.type === "effectPlay") return event.effectId;
   if (event.type === "subtitle") return event.text;
   if (event.type === "soundEffect" || event.type === "bgmPlay") return event.assetId;
   if (event.type === "propChange") return event.propId;
-  return event.type;
+  return labelFor(timelineEventTypeLabels, event.type);
 }
 
 function getPreviewImage(asset: AssetManifest) {

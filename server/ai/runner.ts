@@ -21,9 +21,9 @@ export type RunnerEvent =
   | { kind: "done"; result?: unknown }
   | { kind: "error"; error: string };
 
-const PROMPT_TEMPLATE = (input: AssetGenerationInput) => `You are an asset registration agent for the Cucumber Engine project.
+const PROMPT_TEMPLATE = (input: AssetGenerationInput) => `You are an asset-manifest authoring agent for the Cucumber Engine project.
 
-Use the cucumber-asset-generator Skill. Follow its instructions strictly.
+Use the cucumber-asset-generator Skill. Follow its instructions strictly. The Skill explicitly forbids POSTing to /api/assets — registration is the UI's job. Your output is consumed by the front-end, which previews the manifest and lets the user confirm.
 
 User request:
 - type: ${input.type}
@@ -31,13 +31,12 @@ User request:
 - category: ${input.category ?? "(infer)"}
 - description: ${input.prompt}
 
-Backend API base URL (use this to POST the manifest):
+Backend API base URL (read-only — list/get assets to avoid id collisions):
   ${input.apiBase ?? "http://localhost:3001/api"}
 
-When done, output a final line of pure JSON of shape:
-{"ok": true, "assetId": "<id>", "name": "<name>"}
-or
-{"ok": false, "error": "<reason>"}
+End your run with exactly one trailing line of pure JSON in one of these shapes:
+{"ok": true, "manifest": { ...full AssetManifest, including metadata.shape for visual procedural assets... }}
+{"ok": false, "error": "<short reason>"}
 `;
 
 export async function* runAssetGeneration(
