@@ -7,6 +7,7 @@ import {
   Eye,
   FileJson,
   FilePlus2,
+  Film,
   FolderInput,
   Pause,
   Play,
@@ -15,7 +16,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { PreviewCanvas } from "./components/PreviewCanvas";
+import { PreviewCanvas, type PreviewCanvasHandle } from "./components/PreviewCanvas";
 import { AiAssetGenerator } from "./components/AiAssetGenerator";
 import { AiSegmentGenerator } from "./components/AiSegmentGenerator";
 import { BatchImportPlanner } from "./components/BatchImportPlanner";
@@ -1020,6 +1021,58 @@ function SegmentEditorModal({
 }) {
   const [selectedEventIndex, setSelectedEventIndex] = useState(0);
   const selectedEvent = segment.timeline[selectedEventIndex] ?? null;
+  const previewRef = useRef<PreviewCanvasHandle | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+
+  async function exportSegmentVideo() {
+    if (!previewRef.current || exportBusy) return;
+    setExportBusy(true);
+    setExportProgress(0);
+    try {
+      const webmBlob = await previewRef.current.exportVideo({
+        fps: 30,
+        setTime: onTimeChange,
+        setPlaying: onPlayingChange,
+        // First 95% of the bar represents recording; reserve the last 5%
+        // for the optional transcode roundtrip.
+        onProgress: (p) => setExportProgress(p * 0.95),
+      });
+
+      // Try server-side transcode to MP4; fall back to WebM on any failure.
+      let finalBlob = webmBlob;
+      let extension = "webm";
+      try {
+        const probe = await fetch("/api/export/transcode/probe").then((r) => r.json()).catch(() => ({ available: false }));
+        if (probe?.available) {
+          setExportProgress(0.97);
+          const res = await fetch("/api/export/transcode", {
+            method: "POST",
+            headers: { "Content-Type": "video/webm" },
+            body: webmBlob,
+          });
+          if (res.ok) {
+            finalBlob = await res.blob();
+            extension = "mp4";
+          }
+        }
+      } catch {
+        // Network / transcode failure — silently fall back to WebM
+      }
+
+      setExportProgress(1);
+      const url = URL.createObjectURL(finalBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      const stamp = `${segment.segmentId}_${Date.now().toString(36)}`;
+      a.download = `cucumber_${stamp}.${extension}`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } finally {
+      setExportBusy(false);
+      setExportProgress(0);
+    }
+  }
 
   function updateTimelineEvent(eventIndex: number, nextEvent: TimelineEvent) {
     const nextTimeline = segment.timeline.map((eventItem, index) => (index === eventIndex ? nextEvent : eventItem));
@@ -1062,7 +1115,7 @@ function SegmentEditorModal({
                   className="icon-button"
                   title="导出当前帧为 PNG"
                   onClick={() => {
-                    const canvas = document.querySelector(".preview-canvas") as HTMLCanvasElement | null;
+                    const canvas = previewRef.current?.getCanvas();
                     if (!canvas) return;
                     canvas.toBlob((blob) => {
                       if (!blob) return;
@@ -1078,10 +1131,22 @@ function SegmentEditorModal({
                 >
                   <Download size={16} />
                 </button>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title={exportBusy ? `导出中 ${Math.round(exportProgress * 100)}%` : `导出 WebM 视频 (${segment.duration}s)`}
+                  onClick={exportSegmentVideo}
+                  disabled={exportBusy}
+                  style={exportBusy ? {
+                    background: `linear-gradient(to right, #2f735d ${exportProgress * 100}%, #233433 ${exportProgress * 100}%)`,
+                  } : undefined}
+                >
+                  {exportBusy ? <span style={{ fontSize: 10, fontWeight: 700 }}>{Math.round(exportProgress * 100)}%</span> : <Film size={16} />}
+                </button>
               </div>
             </div>
             <button className="preview-click-target" type="button" onClick={() => onPlayingChange((current) => !current)} title={playing ? "暂停" : "播放"}>
-              <PreviewCanvas project={project} library={library} time={time} playing={playing} />
+              <PreviewCanvas ref={previewRef} project={project} library={library} time={time} playing={playing} />
             </button>
             <section className="control-strip">
               <button className="icon-button" type="button" title={playing ? "暂停" : "播放"} onClick={() => onPlayingChange((current) => !current)}>
@@ -2076,6 +2141,41 @@ function TtsPanel({
     audioRef.current = a;
   }
 
+  // ---- voice audition row ----------------------------------------------
+  //
+  // Fixed sample phrase synthesized in each voice on demand. Results are
+  // server-cached by (voice, emotion, text) so re-clicking is free. Lets
+  // the user A/B between actors before committing to one for the line.
+  const SAMPLE_TEXT = "你好，这是我的声音。";
+  const [auditioningId, setAuditioningId] = useState<string | null>(null);
+  const auditionAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  async function auditionVoice(voiceId: string) {
+    if (auditioningId) return;
+    setAuditioningId(voiceId);
+    try {
+      // Stop whatever audition was playing first.
+      if (auditionAudioRef.current) {
+        auditionAudioRef.current.pause();
+        auditionAudioRef.current = null;
+      }
+      const res = await fetch("/api/tts/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: SAMPLE_TEXT, voice: voiceId, emotion: "neutral" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json() as { audioUrl: string };
+      const a = new Audio(data.audioUrl);
+      auditionAudioRef.current = a;
+      a.onended = () => setAuditioningId(null);
+      a.onerror = () => setAuditioningId(null);
+      await a.play().catch(() => {/* autoplay blocked */});
+    } catch {
+      setAuditioningId(null);
+    }
+  }
+
   return (
     <div className="tts-panel" style={{ marginTop: 12, padding: 12, border: "1px solid var(--border, #ddd)", borderRadius: 8 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
@@ -2113,6 +2213,53 @@ function TtsPanel({
           </small>
         ) : null}
       </div>
+      {/* Voice audition — A/B compare all 7 voices via cached sample phrase */}
+      {voices.length > 0 ? (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--border, #ddd)" }}>
+          <small style={{ color: "var(--muted, #666)", display: "block", marginBottom: 6 }}>音色试听（A/B 对比 · 缓存命中）</small>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {voices.map((v) => {
+              const isLoading = auditioningId === v.id;
+              const isCurrent = voice === v.id;
+              return (
+                <div key={v.id} style={{
+                  display: "flex", alignItems: "center", gap: 0,
+                  border: `1px solid ${isCurrent ? "#2f735d" : "var(--border, #ddd)"}`,
+                  background: isCurrent ? "rgba(47,115,93,0.08)" : "transparent",
+                  borderRadius: 6, overflow: "hidden",
+                }}>
+                  <button
+                    type="button"
+                    title={`试听「${v.name}」(${v.gender}/${v.style})`}
+                    onClick={() => auditionVoice(v.id)}
+                    disabled={Boolean(auditioningId)}
+                    style={{
+                      padding: "4px 7px", border: "none",
+                      background: "transparent", cursor: "pointer",
+                      borderRight: "1px solid var(--border, #eee)",
+                    }}
+                  >
+                    {isLoading ? "…" : <Play size={11} fill="currentColor" />}
+                  </button>
+                  <button
+                    type="button"
+                    title="选用这个音色"
+                    onClick={() => onPatch({ voice: v.id })}
+                    style={{
+                      padding: "4px 9px", border: "none", background: "transparent",
+                      cursor: "pointer", fontSize: 12,
+                      color: isCurrent ? "#2f735d" : "var(--text, #333)",
+                      fontWeight: isCurrent ? 700 : 400,
+                    }}
+                  >
+                    {v.name}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
       {err ? <div style={{ marginTop: 8, color: "var(--err, #c0392b)" }}>{err}</div> : null}
     </div>
   );

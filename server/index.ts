@@ -8,6 +8,7 @@ import { projectsRoute, scenesRoute } from "./routes/projects.js";
 import { aiRoute } from "./routes/ai.js";
 import { ttsRoute } from "./routes/tts.js";
 import { audioRoute } from "./routes/audio.js";
+import { exportRoute } from "./routes/export.js";
 
 const app = new Hono();
 
@@ -22,6 +23,7 @@ app.route("/api/scenes", scenesRoute);
 app.route("/api/ai", aiRoute);
 app.route("/api/tts", ttsRoute);
 app.route("/api/audio", audioRoute);
+app.route("/api/export", exportRoute);
 
 const port = Number(process.env.PORT ?? 3001);
 serve({ fetch: app.fetch, port }, (info) => {

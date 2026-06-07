@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { evaluateTimeline, getAssetName, getActiveSegment } from "../engine/timeline";
 import { drawCharacter, getBodyPartLayers, type BodyPartLayer } from "../engine/characterPainter";
 import {
@@ -23,6 +23,31 @@ interface PreviewCanvasProps {
    * exceeds AUDIO_RESYNC_THRESHOLD seconds.
    */
   playing?: boolean;
+}
+
+/**
+ * Imperative handle exposed via ref for video export. Calling `exportVideo`
+ * arms a MediaRecorder against the live canvas captureStream + a
+ * Web-Audio mix of dialogue/bgm/sfx, then drives playback through the
+ * segment duration and returns a WebM blob. The caller is responsible
+ * for downloading or transcoding the result.
+ */
+export interface PreviewCanvasHandle {
+  exportVideo: (opts: ExportVideoOptions) => Promise<Blob>;
+  getCanvas: () => HTMLCanvasElement | null;
+}
+
+export interface ExportVideoOptions {
+  /** Hint the MediaRecorder fps. Default 30. */
+  fps?: number;
+  /** Called as playback ticks. progress 0..1. */
+  onProgress?: (progress: number) => void;
+  /** Called when recording starts. */
+  onStart?: () => void;
+  /** Setter the export uses to drive playback time. */
+  setTime: (t: number) => void;
+  /** Setter the export uses to start/stop playback. */
+  setPlaying: (p: boolean) => void;
 }
 
 const AUDIO_RESYNC_THRESHOLD = 0.25;
@@ -149,11 +174,40 @@ function collectAudibleEvents(
  *
  * Returns nothing — bag is mutated in place.
  */
+/**
+ * Recording bridge — when video export is active, every newly mounted
+ * audio element gets routed through the export's AudioContext destination
+ * so the recorded MediaStream carries the mix. Set/cleared by the
+ * exportVideo() handle below.
+ */
+interface RecordingBridge {
+  audioContext: AudioContext;
+  destination: MediaStreamAudioDestinationNode;
+  routed: WeakSet<HTMLAudioElement>;
+}
+
+function routeForRecording(el: HTMLAudioElement, bridge: RecordingBridge | null) {
+  if (!bridge) return;
+  if (bridge.routed.has(el)) return;
+  try {
+    const src = bridge.audioContext.createMediaElementSource(el);
+    src.connect(bridge.destination);
+    // Also tee back to the speakers so the user hears playback as it
+    // records — otherwise the export runs in silence.
+    src.connect(bridge.audioContext.destination);
+    bridge.routed.add(el);
+  } catch {
+    // createMediaElementSource throws if the element is already in a
+    // different graph. Ignore — we just won't capture this one.
+  }
+}
+
 function syncAudio(
   bag: AudioBag,
   desired: AudibleEvent[],
   time: number,
   playing: boolean,
+  recordingBridge: RecordingBridge | null,
 ) {
   const desiredKeys = new Set(desired.map((d) => d.key));
 
@@ -179,6 +233,7 @@ function syncAudio(
       el.src = ev.audioUrl;
       el.loop = ev.loop;
     }
+    routeForRecording(el, recordingBridge);
     el.volume = ev.volume;
     const wantedAt = Math.max(0, time - ev.startTime);
     const drift = Math.abs((el.currentTime || 0) - wantedAt);
@@ -196,9 +251,13 @@ function syncAudio(
   }
 }
 
-export function PreviewCanvas({ project, library, time, playing = true }: PreviewCanvasProps) {
+export const PreviewCanvas = forwardRef<PreviewCanvasHandle, PreviewCanvasProps>(function PreviewCanvas(
+  { project, library, time, playing = true },
+  forwardedRef,
+) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioBagRef = useRef<AudioBag>(new Map());
+  const recordingBridgeRef = useRef<RecordingBridge | null>(null);
   const lastSegmentIdRef = useRef<string>("");
   const lastTimeRef = useRef<number>(0);
 
@@ -352,7 +411,7 @@ export function PreviewCanvas({ project, library, time, playing = true }: Previe
     lastTimeRef.current = time;
 
     const audible = collectAudibleEvents(segment.timeline, library, time);
-    syncAudio(audioBagRef.current, audible, time, playing);
+    syncAudio(audioBagRef.current, audible, time, playing, recordingBridgeRef.current);
   }, [project, library, time, playing]);
 
   // Final cleanup on unmount.
@@ -364,8 +423,98 @@ export function PreviewCanvas({ project, library, time, playing = true }: Previe
     };
   }, []);
 
+  // ---- exportVideo handle ------------------------------------------------
+  //
+  // Builds a MediaStream that combines the canvas video track with a Web
+  // Audio destination carrying every active dialogue/narration/bgm/sfx,
+  // then records the segment from t=0 to t=duration via MediaRecorder
+  // and resolves with the resulting WebM blob.
+  //
+  // Caveats / design decisions:
+  //   - Recording runs in REAL TIME (no fast-render path) because the
+  //     audio elements drive playback off wall-clock time. A 22 s
+  //     segment takes ~22 s to export.
+  //   - WebM (vp9 + opus) is the only mime type all Chromium/Firefox
+  //     versions agree on. MP4 requires server-side transcoding via
+  //     /api/export/transcode (added separately).
+  //   - Audio elements created BEFORE recording starts are routed via
+  //     the bridge.routed weak-set; elements created mid-recording are
+  //     routed by syncAudio() via routeForRecording().
+  //   - createMediaElementSource throws if an element was already
+  //     adopted into another AudioContext. We swallow that — affected
+  //     elements simply won't be captured (acceptable for elements that
+  //     finished playing before the export began).
+  useImperativeHandle(forwardedRef, () => ({
+    getCanvas: () => canvasRef.current,
+    exportVideo: async (opts: ExportVideoOptions) => {
+      const canvas = canvasRef.current;
+      if (!canvas) throw new Error("preview canvas not mounted yet");
+      const segment = getActiveSegment(project);
+      const fps = opts.fps ?? 30;
+
+      // Build the Web Audio mix + recording bridge.
+      const audioContext = new AudioContext();
+      const dest = audioContext.createMediaStreamDestination();
+      const bridge: RecordingBridge = { audioContext, destination: dest, routed: new WeakSet() };
+      recordingBridgeRef.current = bridge;
+      // Adopt any audio elements already playing into the bridge.
+      for (const el of audioBagRef.current.values()) routeForRecording(el, bridge);
+
+      const videoStream = canvas.captureStream(fps);
+      const combined = new MediaStream([
+        ...videoStream.getVideoTracks(),
+        ...dest.stream.getAudioTracks(),
+      ]);
+
+      const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+        ? "video/webm;codecs=vp9,opus"
+        : "video/webm";
+      const recorder = new MediaRecorder(combined, { mimeType: mime, videoBitsPerSecond: 4_500_000 });
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+      const blobPromise = new Promise<Blob>((resolve) => {
+        recorder.onstop = () => resolve(new Blob(chunks, { type: "video/webm" }));
+      });
+
+      // Reset playback + start recording + start playback.
+      opts.setTime(0);
+      opts.setPlaying(false);
+      // Wait a frame so the canvas reflects the reset before capturing.
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+      recorder.start(250);
+      opts.onStart?.();
+      opts.setPlaying(true);
+
+      // Tick a progress reporter against wall-clock instead of `time` state
+      // (we don't have access to that without a getter; the playback effect
+      // is what drives time forward).
+      const startedAt = performance.now();
+      const totalMs = (segment.duration + 0.4) * 1000;
+      const progressTimer = window.setInterval(() => {
+        const elapsed = performance.now() - startedAt;
+        const progress = Math.min(elapsed / totalMs, 1);
+        opts.onProgress?.(progress);
+        if (elapsed >= totalMs) {
+          window.clearInterval(progressTimer);
+          recorder.stop();
+          opts.setPlaying(false);
+        }
+      }, 200);
+
+      const blob = await blobPromise;
+
+      // Tear down the bridge.
+      try { audioContext.close(); } catch { /* ignore */ }
+      recordingBridgeRef.current = null;
+
+      return blob;
+    },
+  }), [project]);
+
   return <canvas ref={canvasRef} className="preview-canvas" width={width} height={height} aria-label="黄瓜引擎短剧预览" />;
-}
+});
 
 function withCameraLayer(
   ctx: CanvasRenderingContext2D,
