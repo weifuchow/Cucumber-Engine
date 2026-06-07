@@ -5,6 +5,7 @@ export interface CharacterRenderState {
   visible: boolean;
   x: number;
   y: number;
+  z: number;
   scale: number;
   expression: string;
   action?: string;
@@ -45,6 +46,7 @@ export function evaluateTimeline(project: Project, library: AssetLibrary, time: 
         visible: true,
         x: event.position.x,
         y: event.position.y,
+        z: event.position.z ?? 0,
         scale: event.scale ?? 1,
         expression: event.expression ?? "neutral",
       });
@@ -72,10 +74,13 @@ export function evaluateTimeline(project: Project, library: AssetLibrary, time: 
 
     const from = getPositionBeforeMove(segment.timeline, move.target, move.time);
     const progress = clamp((time - move.time) / Math.max(move.duration, 0.001), 0, 1);
+    const eased = easeInOut(progress);
+    const targetZ = move.to.z ?? current.z;
     characterMap.set(move.target, {
       ...current,
-      x: lerp(from.x, move.to.x, easeInOut(progress)),
-      y: lerp(from.y, move.to.y, easeInOut(progress)),
+      x: lerp(from.x, move.to.x, eased),
+      y: lerp(from.y, move.to.y, eased),
+      z: lerp(from.z, targetZ, eased),
     });
   }
 
@@ -156,10 +161,14 @@ function evaluateCamera(events: TimelineEvent[], characters: CharacterRenderStat
 }
 
 function getPositionBeforeMove(events: TimelineEvent[], target: string, time: number) {
-  let position = { x: 640, y: 540 };
+  let position: { x: number; y: number; z: number } = { x: 640, y: 540, z: 0 };
   for (const event of events.filter((item) => item.time < time).sort((a, b) => a.time - b.time)) {
-    if (event.type === "characterAppear" && event.target === target) position = event.position;
-    if (event.type === "characterMove" && event.target === target && event.time + event.duration <= time) position = event.to;
+    if (event.type === "characterAppear" && event.target === target) {
+      position = { x: event.position.x, y: event.position.y, z: event.position.z ?? 0 };
+    }
+    if (event.type === "characterMove" && event.target === target && event.time + event.duration <= time) {
+      position = { x: event.to.x, y: event.to.y, z: event.to.z ?? position.z };
+    }
   }
   return position;
 }

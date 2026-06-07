@@ -17,11 +17,14 @@ import {
 } from "lucide-react";
 import { PreviewCanvas } from "./components/PreviewCanvas";
 import { AiAssetGenerator } from "./components/AiAssetGenerator";
+import { AiSegmentGenerator } from "./components/AiSegmentGenerator";
+import { BatchImportPlanner } from "./components/BatchImportPlanner";
 import { CharacterPortrait } from "./components/CharacterPortrait";
 import { AssetPreviewStage } from "./components/AssetPreviewStage";
 import { sampleLibrary, sampleProject } from "./data/sampleProject";
 import { getActiveSegment } from "./engine/timeline";
 import { importImageFile, importSceneJsonFile, importSpriteSheetJsonFile } from "./importers/importers";
+import { importSpineJsonFile } from "./importers/spineImporter";
 import { buildAssetManifestExport, buildProjectExport, downloadJson } from "./utils/exporters";
 import { api } from "./api/client";
 import {
@@ -48,6 +51,17 @@ const modules: Array<{ id: ModuleId; label: string; description: string; icon: t
 type PendingImport =
   | { kind: "image"; file: File; scope: AssetScope }
   | { kind: "spritesheet"; file: File; scope: AssetScope };
+
+function dedupe(assets: AssetManifest[]): AssetManifest[] {
+  const seen = new Set<string>();
+  const out: AssetManifest[] = [];
+  for (const a of assets) {
+    if (seen.has(a.assetId)) continue;
+    seen.add(a.assetId);
+    out.push(a);
+  }
+  return out;
+}
 
 function collectTimelineUsedAssetIds(project: Project): Set<string> {
   const ids = new Set<string>();
@@ -79,6 +93,8 @@ export function App() {
   const [assetPreviewOpen, setAssetPreviewOpen] = useState(false);
   const [segmentEditorOpen, setSegmentEditorOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState<null | { scope: AssetScope }>(null);
+  const [aiSegmentOpen, setAiSegmentOpen] = useState(false);
+  const [batchImportOpen, setBatchImportOpen] = useState<null | { scope: AssetScope }>(null);
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
 
   const apiReadyRef = useRef(false);
@@ -186,6 +202,27 @@ export function App() {
     }
   }
 
+  async function handleSpineImport(file: File | undefined, scope: AssetScope) {
+    if (!file) return;
+    try {
+      const manifest = await importSpineJsonFile(file, scope);
+      await api.saveAsset(manifest);
+      setLibrary((current) =>
+        scope === "global"
+          ? { ...current, globalAssets: [manifest, ...current.globalAssets] }
+          : { ...current, projectAssets: [manifest, ...current.projectAssets] },
+      );
+      if (scope === "project") {
+        setProject((current) => ({ ...current, assetRefs: [...new Set([manifest.assetId, ...current.assetRefs])] }));
+      }
+      setSelectedAssetId(manifest.assetId);
+      setAssetPreviewOpen(true);
+      setNotice(`已从 Spine JSON 导入「${manifest.name}」（${(manifest.metadata.actions as string[] | undefined)?.length ?? 0} 个动作）。`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Spine JSON 导入失败。");
+    }
+  }
+
   async function handleSpriteSheetImport(file: File, type: AssetType, scope: AssetScope) {
     const narrowed: "action" | "effect" = type === "action" ? "action" : "effect";
     try {
@@ -245,6 +282,57 @@ export function App() {
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "删除失败。");
     }
+  }
+
+  async function acceptAiSegment(result: { chapter: Chapter; segment: Segment; newAssets: AssetManifest[] }) {
+    // 1. Persist any new assets the AI designed so they're available next
+    //    time the project loads. We do this before inserting the chapter so
+    //    the timeline's references are immediately resolvable.
+    for (const asset of result.newAssets) {
+      try {
+        await api.saveAsset(asset);
+      } catch (err) {
+        console.warn(`[ai-segment] saveAsset failed for ${asset.assetId}:`, err);
+      }
+    }
+
+    // 2. Merge new assets into the in-memory library.
+    if (result.newAssets.length) {
+      setLibrary((current) => ({
+        ...current,
+        globalAssets: dedupe([...result.newAssets.filter((a) => a.scope === "global"), ...current.globalAssets]),
+        projectAssets: dedupe([...result.newAssets.filter((a) => a.scope === "project"), ...current.projectAssets]),
+      }));
+    }
+
+    // 3. Insert (or merge) the chapter into the project and switch preview
+    //    to the new segment. If a chapter with the same id already exists,
+    //    append the segment to it rather than duplicating chapters.
+    const newAssetRefs = result.newAssets.map((a) => a.assetId);
+    setProject((current) => {
+      const existingIdx = current.chapters.findIndex((ch) => ch.chapterId === result.chapter.chapterId);
+      let chapters: Chapter[];
+      if (existingIdx >= 0) {
+        const existing = current.chapters[existingIdx];
+        const segmentIdx = existing.segments.findIndex((s) => s.segmentId === result.segment.segmentId);
+        const segments = segmentIdx >= 0
+          ? existing.segments.map((s, i) => (i === segmentIdx ? result.segment : s))
+          : [...existing.segments, result.segment];
+        chapters = current.chapters.map((ch, i) => (i === existingIdx ? { ...existing, segments } : ch));
+      } else {
+        chapters = [...current.chapters, { ...result.chapter, segments: [result.segment] }];
+      }
+      return {
+        ...current,
+        chapters,
+        assetRefs: [...new Set([...current.assetRefs, ...newAssetRefs])],
+        preview: { activeChapterId: result.chapter.chapterId, activeSegmentId: result.segment.segmentId },
+      };
+    });
+    setSegmentEditorOpen(true);
+    setTime(0);
+    setPlaying(false);
+    setNotice(`AI 已插入片段「${result.segment.name}」（${result.segment.duration}s · ${result.newAssets.length} 个新资产）。`);
   }
 
   function createChapter() {
@@ -386,10 +474,16 @@ export function App() {
           </div>
           <div className="actions">
             {activeModule === "project" ? (
-              <button type="button" onClick={createChapter}>
-                <Sparkles size={17} />
-                <span>新章节</span>
-              </button>
+              <>
+                <button type="button" onClick={createChapter}>
+                  <Sparkles size={17} />
+                  <span>新章节</span>
+                </button>
+                <button type="button" onClick={() => setAiSegmentOpen(true)} title="AI 根据剧本要点直接生成一段">
+                  <Sparkles size={17} />
+                  <span>AI 生成片段</span>
+                </button>
+              </>
             ) : null}
             <button type="button" onClick={() => downloadJson("cucumber-project.json", buildProjectExport(project, library))}>
               <Download size={17} />
@@ -410,6 +504,8 @@ export function App() {
               selectedAssetId={selectedAssetId}
               onImageImport={(file) => queueImport("image", file, "global")}
               onSceneImport={handleSceneImport}
+              onSpineImport={(file) => handleSpineImport(file, "global")}
+              onOpenBatchImport={() => setBatchImportOpen({ scope: "global" })}
               onSpriteSheetImport={(file) => queueImport("spritesheet", file, "global")}
               onOpenAi={() => setAiOpen({ scope: "global" })}
               onDeleteAsset={handleDeleteAsset}
@@ -434,6 +530,8 @@ export function App() {
               onUpdateChapter={updateChapter}
               onUpdateSegment={updateSegment}
               onImageImport={(file) => queueImport("image", file, "project")}
+              onSpineImport={(file) => handleSpineImport(file, "project")}
+              onOpenBatchImport={() => setBatchImportOpen({ scope: "project" })}
               onSpriteSheetImport={(file) => queueImport("spritesheet", file, "project")}
               onOpenAi={() => setAiOpen({ scope: "project" })}
               onDeleteAsset={handleDeleteAsset}
@@ -490,6 +588,30 @@ export function App() {
           }}
         />
       ) : null}
+      {aiSegmentOpen ? (
+        <AiSegmentGenerator
+          project={project}
+          library={library}
+          onClose={() => setAiSegmentOpen(false)}
+          onAccept={acceptAiSegment}
+        />
+      ) : null}
+      {batchImportOpen ? (
+        <BatchImportPlanner
+          defaultScope={batchImportOpen.scope}
+          onClose={() => setBatchImportOpen(null)}
+          onRegistered={(manifests) => {
+            // Splice in via library reload so the new asset shows up everywhere.
+            setNotice(`AI 已批量入库 ${manifests.length} 个资产。`);
+            void reloadLibraryFromApi();
+            for (const m of manifests) {
+              if (m.scope === "project") {
+                setProject((current) => ({ ...current, assetRefs: [...new Set([m.assetId, ...current.assetRefs])] }));
+              }
+            }
+          }}
+        />
+      ) : null}
     </main>
   );
 }
@@ -500,6 +622,8 @@ function AssetLibraryModule({
   selectedAssetId,
   onImageImport,
   onSceneImport,
+  onSpineImport,
+  onOpenBatchImport,
   onSpriteSheetImport,
   onSelectAsset,
   onOpenAi,
@@ -510,6 +634,8 @@ function AssetLibraryModule({
   selectedAssetId: string;
   onImageImport: (file: File | undefined) => void;
   onSceneImport: (file: File | undefined) => void;
+  onSpineImport: (file: File | undefined) => void;
+  onOpenBatchImport: () => void;
   onSpriteSheetImport: (file: File | undefined) => void;
   onSelectAsset: (assetId: string) => void;
   onOpenAi: () => void;
@@ -527,10 +653,19 @@ function AssetLibraryModule({
           <span>导入图片</span>
           <input type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={(event) => onImageImport(event.target.files?.[0])} />
         </label>
+        <button type="button" className="file-button ai-trigger" onClick={onOpenBatchImport} title="选择多张图，AI 自动归类生成">
+          <Sparkles size={17} />
+          <span>AI 批量图像导入</span>
+        </button>
         <label className="file-button">
           <FileJson size={17} />
           <span>导入场景 JSON</span>
           <input type="file" accept=".json,application/json" onChange={(event) => onSceneImport(event.target.files?.[0])} />
+        </label>
+        <label className="file-button" title="Spine 2D 骨骼动画格式（Spine 3.x / 4.x JSON 导出）">
+          <FileJson size={17} />
+          <span>导入 Spine JSON</span>
+          <input type="file" accept=".json,application/json" onChange={(event) => onSpineImport(event.target.files?.[0])} />
         </label>
         <label className="file-button">
           <FolderInput size={17} />
@@ -569,6 +704,8 @@ function ProjectModule({
   onUpdateChapter,
   onUpdateSegment,
   onImageImport,
+  onSpineImport,
+  onOpenBatchImport,
   onSpriteSheetImport,
   onOpenAi,
   onDeleteAsset,
@@ -587,6 +724,8 @@ function ProjectModule({
   onUpdateChapter: (chapterId: string, patch: Partial<Chapter>) => void;
   onUpdateSegment: (chapterId: string, segmentId: string, patch: Partial<Segment>) => void;
   onImageImport: (file: File | undefined) => void;
+  onSpineImport: (file: File | undefined) => void;
+  onOpenBatchImport: () => void;
   onSpriteSheetImport: (file: File | undefined) => void;
   onOpenAi: () => void;
   onDeleteAsset: (assetId: string) => void;
@@ -630,6 +769,15 @@ function ProjectModule({
               <ImagePlus size={16} />
               <span>导入图片</span>
               <input type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={(event) => onImageImport(event.target.files?.[0])} />
+            </label>
+            <button type="button" className="file-button ai-trigger" onClick={onOpenBatchImport}>
+              <Sparkles size={16} />
+              <span>AI 批量图像导入</span>
+            </button>
+            <label className="file-button" title="Spine 2D 骨骼动画格式">
+              <FileJson size={16} />
+              <span>导入 Spine JSON</span>
+              <input type="file" accept=".json,application/json" onChange={(event) => onSpineImport(event.target.files?.[0])} />
             </label>
             <label className="file-button">
               <FolderInput size={16} />

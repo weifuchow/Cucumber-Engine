@@ -11,6 +11,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "db:init": "tsx server/db/init.ts",
     "db:seed": "tsx server/db/seed.ts",
+    "lint:2.5d": "tsx scripts/lint-2_5d.ts",
+    "build:character": "tsx scripts/build-character-shape.ts",
     "check": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json"
   },
   "dependencies": {

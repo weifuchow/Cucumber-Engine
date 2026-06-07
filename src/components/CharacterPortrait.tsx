@@ -1,6 +1,12 @@
 import { useEffect, useRef } from "react";
 import { drawCharacter } from "../engine/characterPainter";
-import { drawShape, isProceduralShape } from "../engine/proceduralShape";
+import {
+  drawSceneLayer,
+  drawShape,
+  hasSceneLayers,
+  isProceduralShape,
+  type SceneLayerKey,
+} from "../engine/proceduralShape";
 import type { AssetManifest } from "../types/schema";
 
 const W = 340;
@@ -41,7 +47,13 @@ export function CharacterPortrait({ asset }: { asset: AssetManifest }) {
       const s = Math.min(W / w, H / h) * 0.96;
       ctx.translate((W - w * s) / 2, (H - h * s) / 2);
       ctx.scale(s, s);
-      drawShape(ctx, shape, palette, { progress: 0.4 });
+
+      if (hasSceneLayers(shape)) {
+        const layers: SceneLayerKey[] = ["background", "midground", "foreground"];
+        for (const layer of layers) drawSceneLayer(ctx, shape, palette, { progress: 0.4 }, layer);
+      } else {
+        drawShape(ctx, shape, palette, { progress: 0.4 });
+      }
       return;
     }
 

@@ -114,7 +114,7 @@ export type TimelineEvent =
       time: number;
       type: "characterAppear";
       target: string;
-      position: { x: number; y: number };
+      position: { x: number; y: number; z?: number };
       expression?: string;
       scale?: number;
     }
@@ -123,7 +123,7 @@ export type TimelineEvent =
       time: number;
       type: "characterMove";
       target: string;
-      to: { x: number; y: number };
+      to: { x: number; y: number; z?: number };
       duration: number;
     }
   | {

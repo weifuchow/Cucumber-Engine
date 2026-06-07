@@ -9,6 +9,8 @@ export interface DrawCharacterOptions {
   action?: string;
   time?: number;
   name?: string;
+  /** Pseudo-depth used by contact shadow + lighting expressions in the shape. */
+  z?: number;
 }
 
 export function drawCharacter(
@@ -30,6 +32,7 @@ export function drawCharacter(
       action: options.action ?? "idle",
       time: options.time ?? 0,
       name: displayName,
+      z: options.z ?? 0,
     });
   }
 

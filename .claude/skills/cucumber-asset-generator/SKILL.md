@@ -60,10 +60,140 @@ Mirror `src/types/schema.ts`. Every manifest MUST include:
 `metadata` by type:
 - **character / prop / scene / background / foreground / effect (visual, procedural)**: include `shape: ProceduralShape` — see [references/procedural-shape.md](references/procedural-shape.md). Without `shape`, the engine cannot render the asset.
 - **character**: also `width:int, height:int, anchor:{x,y}, palette:{body,skin,hair,...}, parts:[...]`, optional `displayName:string` (overrides head-badge text).
-- **scene / background / foreground**: also `width:int, height:int`.
+- **scene / background / foreground**: also `width:int, height:int, layers:["background","midground","foreground"]`. The `shape` MUST populate `layers.background/midground/foreground` and a `parallax` map (see 2.5D rules below).
 - **prop**: also `width:int, height:int`.
 - **effect**: also `blendMode:"screen|add|multiply|normal", defaultDuration:number`. The shape may reference `progress` (0 → 1 over `defaultDuration`).
 - **bgm / soundEffect**: `durationSec:number, loop:bool, bpm:int?` — no shape (audio).
+
+## 2.5D rules (mandatory for visual procedural assets)
+
+These rules turn a flat manifest into a depth-readable 2.5D asset. The engine renderer respects them automatically once they appear in `shape`.
+
+### Characters must include the lighting trio
+
+1. **Body lighting gradient** — at least one linear OR radial gradient overlay on the torso (in addition to the palette base color).
+2. **Face radial highlight** — a radial gradient on the head circle whose focus point sits in the upper-left quadrant.
+3. **Contact shadow that follows `z`** — an ellipse below the feet whose `rx`/`ry` shrink with the `z` state variable, e.g. `"92 * (1 - clamp(z * 0.0008, 0, 0.35))"`.
+
+### Characters MUST be generated through the shape builder script
+
+Hand-writing 150 primitives for every character is how AI-generated assets degenerate into Flash-style stacked rectangles. Instead, **always invoke the shape builder script** to generate `metadata.shape`:
+
+```bash
+echo '{
+  "palette": { "body": "#c14a3a", "skin": "#f0bf95", "hair": "#1f1610", "pants": "#3b6090" },
+  "hairStyle": "fringe",
+  "hat": "straw",
+  "hatColor": "#e8c97a",
+  "hatBandColor": "#c14a3a",
+  "costume": "vest",
+  "shorts": true,
+  "eyeStyle": "almond",
+  "facialMarks": [{ "kind": "scar_diagonal", "at": "under_left_eye" }],
+  "chestEmblem": { "color": "#fff8e0" }
+}' | npx tsx scripts/build-character-shape.ts > /tmp/shape.json
+```
+
+Then embed the resulting JSON as `metadata.shape` in your manifest. The script guarantees ~150 primitives of consistent cel-shading quality: almond eyes with iris radial gradient + double highlight, ~6 polygon hair wisps with crown highlight, anatomically subtle nose (one shading line + nostril dots), thin curved-polygon eyebrows that switch shape per expression, neck occlusion shadow, cheek hue-shift, sleeve cuffs with shadow, optional hat with brim shadow on forehead, optional facial scars/marks, all 5 actions (idle/walking/attack/defend/victory) wired with `when` branches.
+
+#### CharacterSpec schema
+
+```ts
+{
+  hairStyle?: "short" | "fringe" | "spiky" | "flowing" | "bald",
+  hat?:      "none" | "straw" | "cap" | "beret" | "headband",
+  hatColor?: string,       // CSS hex
+  hatBandColor?: string,   // CSS hex (only for straw hat ribbon)
+  costume?:  "jacket" | "vest" | "robe" | "shirt" | "tank",
+  shorts?:   boolean,      // true = shorts, false = full pants
+  eyeStyle?: "round" | "almond" | "narrow",
+  facialMarks?: [
+    { kind: "scar_diagonal"|"scar_x"|"mark_dot"|"mole",
+      at:   "left_cheek"|"right_cheek"|"forehead"|"under_left_eye"|"under_right_eye",
+      color?: string }
+  ],
+  chestEmblem?: { color: string }
+}
+```
+
+#### When to use `--emit manifest`
+
+If the user only wants the shape (your usual case — you wrap it yourself in a manifest with the right tags / references / license), use the default `--emit shape`.
+
+If you want the whole AssetManifest in one shot:
+
+```bash
+npx tsx scripts/build-character-shape.ts --emit manifest --spec '{
+  "assetId": "character_chef_001",
+  "name": "厨师小李",
+  "displayName": "小李",
+  "palette": { "body": "#f5e7d4", "skin": "#f0b985", "hair": "#1a120a", "pants": "#2a2018" },
+  "hairStyle": "short",
+  "costume": "shirt",
+  "hat": "none",
+  "references": [{ "sourceType": "web", "source": "https://...", "note": "chef apron reference" }]
+}'
+```
+
+then `Read` the output, parse, optionally edit a few fields, emit.
+
+#### When NOT to use the script
+
+- The user is generating a **non-human** character (animal, robot, abstract) → fall back to writing primitives by hand following the recipes in [references/procedural-shape.md](references/procedural-shape.md).
+- The user wants very specific costume geometry the spec doesn't cover (kimono, samurai armor, lab coat with pockets) → use the script for the base body, then `Read` the shape JSON, deserialize, append your costume primitives to `primitives[]`, re-serialize.
+
+#### Acceptance bar (the script handles all of these automatically)
+
+1. **Outline strokes** on torso + limbs + head silhouette
+2. **Hair locks** — 5–6 polygon wisps with curved tips
+3. **Facial features** — almond eye polygon, iris radial gradient, double highlight, curved-polygon eyebrows, minimal nose (shading line + nostril dots), upper-lip polygon with corner shadows
+4. **Clothing detail** — V-lapels with gradient, 3 button circles, belt with buckle (when costume = jacket/vest), shoulder occlusion shadow
+5. **Shoes** — rounded-toe polygon + top sheen ellipse + heel shadow
+6. Optional **hat** with brim shadow projected on forehead
+7. Optional **facial marks** (scars, moles, dots)
+8. All 5 actions (idle/walking/attack/defend/victory)
+9. z-aware contact shadow
+
+Targets ~150 primitives total. Anything under 80 with the script means something went wrong — re-run.
+
+### Characters must support at least 4 actions
+
+Every character shape MUST gate parts of its body on `action` so the timeline can pose it. Required minimum action set:
+
+- `idle` (default, includes subtle `sin(time)` breathing)
+- `walking` (limbs swing with `sin(time * 8) * 0.5` around the hip pivot)
+- One of `attack` / `punch` / `swing` (right arm thrust forward)
+- One of `defend` / `block` (arms crossed at the chest)
+
+Optional but recommended: `victory`, `cheer`, `sit`, `kneel`.
+
+Use the procedural-shape DSL: each action has its own `when: "action == xxx"` branch wrapping a `transform` with the desired pose. The same arm primitives can be re-used in 4–5 branches without duplicating geometry — just change the `translate` and `rotate`.
+
+Declare the supported set in `metadata.actions: string[]` so the AssetPreviewStage shows the right buttons.
+
+A character manifest missing any of the three rule sets (lighting trio + cel-shading detail set + ≥ 4 actions) is **not viable** and should be re-authored before emitting.
+
+### Scenes must split into three layers + parallax
+
+`shape.layers.background`, `shape.layers.midground`, `shape.layers.foreground` are all required (each a non-empty primitive list), AND `shape.parallax` must be supplied for at least the two non-default layers.
+
+- **background**: distant wall / sky / haze / framed pictures — slow parallax (default 0.45–0.55).
+- **midground**: main furniture + structural elements — full-camera parallax (1.0).
+- **foreground**: items that should **occlude characters** as the camera pans — fast parallax (default 1.2–1.4).
+
+Background rects should overshoot the canvas: use `x = -200, w = 1680` so the parallax pan doesn't reveal empty edges.
+
+The background layer should contain at least one atmospheric haze rect (cool-tone translucent gradient) — this is the cheapest depth cue.
+
+### Props should sell volume
+
+At least one of: linear/radial gradient highlight, OR a `shadow` modifier on the main rect, OR a small contact-shadow ellipse below.
+
+### Effects should glow
+
+Effects that fade in/out should pair a radial-gradient halo behind the main spikes — center-bright, edge-transparent — driven by `${1 - progress}` alpha.
+
+See [references/procedural-shape.md](references/procedural-shape.md) for the exact recipes. The pre-flight validation checklist at the bottom of that file is the final gate before emitting the manifest.
 
 ## Procedural shape (visual assets)
 
@@ -75,9 +205,86 @@ See [references/procedural-shape.md](references/procedural-shape.md) for primiti
 
 1. **Clarify only if necessary.** From the user prompt infer: type, scope, category, style. Only ask back if a required field is genuinely ambiguous.
 2. **De-dup.** `curl -sS "$CUCUMBER_API_BASE/assets?type=<type>" | jq -r '.assets[].assetId'` and pick an unused id.
-3. **Research sources** (only if the asset references external files). Use `WebFetch`/`WebSearch` to verify license terms **before** including the URL. If license is unclear, set `commercialUse:false, needAttribution:true`, and add `metadata.licenseNote`.
-4. **Compose the manifest.** For visual procedural assets, author `metadata.shape` from the primitives in [references/procedural-shape.md](references/procedural-shape.md). Start from an example shape that matches the asset type (character → body+head+face; prop → simple rounded rects; effect → starBurst with `progress`-driven radius/rotation/alpha; scene → background gradient + furniture rects).
-5. **Emit final line.** Print exactly one trailing line of JSON in the format described in **Output format** above. Nothing after it. The frontend slurps the last `{...}` JSON object from your output.
+3. **Visual reference research (REQUIRED for character / scene / prop / background / foreground).** See "Reference research" below.
+4. **Inspect provided reference images.** When the user has uploaded local images, paths arrive via `metadata.referenceImagePaths[]` (relative to repo root). `Read` them — Claude's vision capability extracts palette, silhouette, posture. **Treat user-uploaded images as the authoritative reference**, web search is the fallback.
+5. **License check on external assets.** If the manifest references external files (downloaded sprites, BGM), use `WebFetch` to verify license terms before recording the URL. If unclear, set `commercialUse:false, needAttribution:true`, add `metadata.licenseNote`.
+6. **Compose the manifest.** For visual procedural assets, author `metadata.shape` from the primitives in [references/procedural-shape.md](references/procedural-shape.md). The shape MUST faithfully mirror the reference's defining features (silhouette, palette, signature accessories, posture) — generic stand-ins are rejected.
+7. **Emit final line.** Print exactly one trailing line of JSON in the format described in **Output format** above. Nothing after it. The frontend slurps the last `{...}` JSON object from your output.
+
+## Reference research
+
+A character / scene / prop manifest WITHOUT reference imagery in the workflow reads as generic. Before authoring the shape, you MUST do one of:
+
+### Option A — User-provided images
+
+If `metadata.referenceImagePaths` is populated in the input, `Read` each path (they are local files). Build a feature spec:
+
+```
+References:
+  /tmp/asset_imports/iori_back_pose.png:
+    silhouette  : tall, narrow torso, slight back-arch, looking over shoulder
+    palette     : black jacket #1f1814, white inner shirt #f1ece4,
+                  fiery red hair #d33a17, orange pants #ef6d2c,
+                  black shoes #1a1612, gold belt buckle #d9b46b
+    landmarks   : white circle emblem on right shoulder, leather belt with
+                  dangling strap, sharp spiky hair tips, cuffed sleeves
+    signature   : pointing-back gesture with left hand, right hand at hip
+    posture     : standing back-to-camera, weight on left foot
+  /tmp/asset_imports/iori_front_attack.png:
+    posture     : right-arm forward thrust, left arm tucked at chest
+    expression  : narrow eyes, mouth set
+    new info    : confirmed front-view hair has spiky bangs over right eye
+```
+
+### Option B — Web search
+
+When the user only described the asset in text, search the web:
+
+1. `WebSearch "<subject> character key visual reference"` — pick 1–3 stable URLs (artstation, fandom wiki, official site)
+2. `WebFetch <url>` — read the page description / alt text for visible features
+3. Build the feature spec described in option A from textual description
+
+### Recording references in the manifest
+
+Add `metadata.references: { source: string; note: string; sourceType: "user-upload" | "web" }[]`:
+
+```json
+"metadata": {
+  "references": [
+    { "sourceType": "user-upload", "source": "iori_back_pose.png", "note": "back-pose, palette + silhouette source" },
+    { "sourceType": "web",          "source": "https://kof.fandom.com/wiki/Iori_Yagami", "note": "front view confirmation + signature gestures" }
+  ],
+  ...
+}
+```
+
+**Copyright rule.** Do not embed binary image data in the manifest. The references field stores URLs / filenames only — they're for attribution and let a reviewer trace what the AI looked at. The shape itself is your original interpretation; if the reference is copyrighted, deliberately re-stylize (different proportions, different secondary palette) rather than tracing.
+
+## Open-format conversion
+
+When the user wants to import an asset that's already in a standard 2D format, the engine has two paths:
+
+1. **Programmatic** (preferred when supported): the frontend ships a converter that emits a manifest directly without an AI round-trip. Currently shipped:
+   - **Spine JSON** — `src/importers/spineImporter.ts`. Parses bones, slots, region attachments, and animation names. Skin colors come from `slots[].color`, geometry from region attachments. Animation names become `metadata.actions` entries; default pose becomes `idle`.
+2. **AI conversion** (you do this when the user uploads a format the engine doesn't know): the user passes the file as a `metadata.sourceFile` path; you `Read` it, parse the JSON, and translate to a procedural shape.
+
+### Recipes for common open formats
+
+| Format | What to map | How |
+|---|---|---|
+| **Spine JSON** | `bones[]` → coordinate hierarchy<br/>`slots[].color` → palette / fill<br/>`skins.default.attachments` → region rects / polygons<br/>`animations` keys → `metadata.actions[]` | See spineImporter.ts for the canonical mapping. Each region attachment becomes a `transform`-wrapped `roundedRect` at the bone's world position. |
+| **DragonBones JSON** | `armature[].bone[]`, `armature[].slot[]`, `armature[].skin[].slot[].display[]` | Same shape as Spine; `display[].type == "image"` → rect, `mesh` → polygon. |
+| **Lottie JSON (Bodymovin)** | `layers[].shapes[]` → procedural primitives directly | Lottie shape `ty: "rc"` → roundedRect, `el` → ellipse, `sr` → starBurst, `gf` → gradient fill. Map `ks.p` → translate, `ks.r` → rotate, `ks.s` → scale, drive with `time` expression. |
+| **Tiled TMX / JSON** | scene `layers[]` → `ProceduralShape.layers.{background,midground,foreground}` | Each Tiled image layer → a `rect` of that image's palette-extracted color. Object layers → individual props. Pick parallax factors from Tiled `parallaxx` / `parallaxy` properties. |
+| **Aseprite JSON sheet** | `frames` + `meta.frameTags` | Each frame tag becomes an action; geometry is a single `rect` with `fill` = average color (placeholder). Better path: read the PNG, run palette extraction, build polygons matching frame contents. |
+
+After conversion always set:
+
+```json
+"source": { "kind": "imported", "format": "spine-json" | "lottie-json" | "tiled-json" | "aseprite-json", "originalFile": "<filename>" }
+```
+
+so the UI shows the provenance.
 
 ## Hard rules
 
@@ -89,7 +296,9 @@ See [references/procedural-shape.md](references/procedural-shape.md) for primiti
 
 ## Examples
 
-### Procedural character
+### Procedural 2.5D character (cel-shading bar)
+
+The example below is **abridged**. A real submission must hit ~100 primitives — outlines on every silhouette, ≥ 4 hair locks, nose/lip/jaw polygons, sleeve cuffs, ≥ 4 `action` branches. See `src/data/characterShapes.ts:buildHumanCharacterShape` for a complete reference (you can model your output on its structure).
 
 ```json
 {
@@ -110,12 +319,102 @@ See [references/procedural-shape.md](references/procedural-shape.md) for primiti
       "parts": ["body","face","hair","expression","costume","voice"],
       "displayName": "小李",
       "shape": { "primitives": [
-        { "kind": "ellipse", "cx": 0, "cy": 14, "rx": 92, "ry": 25, "fill": "rgba(25,24,22,0.18)" },
+        { "kind": "ellipse", "cx": 0, "cy": 14,
+          "rx": "92 * (1 - clamp(z * 0.0008, 0, 0.35))",
+          "ry": "25 * (1 - clamp(z * 0.0008, 0, 0.35))",
+          "fill": { "gradient": "radial",
+            "x0": 0, "y0": 14, "r0": 0, "x1": 0, "y1": 14, "r1": 92,
+            "stops": [
+              { "at": 0,    "color": "rgba(20,18,16,${0.34 * (1 - clamp(z * 0.0008, 0, 0.6))})" },
+              { "at": 0.72, "color": "rgba(20,18,16,${0.16 * (1 - clamp(z * 0.0008, 0, 0.6))})" },
+              { "at": 1,    "color": "rgba(20,18,16,0)" }
+            ] } },
         { "kind": "roundedRect", "x": -58, "y": -245, "w": 116, "h": 205, "r": 38, "fill": { "palette": "body" } },
+        { "kind": "roundedRect", "x": -58, "y": -245, "w": 116, "h": 205, "r": 38,
+          "fill": { "gradient": "linear", "x0": -58, "y0": -245, "x1": 58, "y1": -40,
+            "stops": [
+              { "at": 0,    "color": "rgba(255,255,255,0.2)" },
+              { "at": 0.45, "color": "rgba(255,255,255,0)" },
+              { "at": 1,    "color": "rgba(0,0,0,0.24)" }
+            ] } },
         { "kind": "circle", "cx": 0, "cy": -310, "r": 70, "fill": { "palette": "skin" } },
+        { "kind": "circle", "cx": 0, "cy": -310, "r": 70,
+          "fill": { "gradient": "radial",
+            "x0": -22, "y0": -334, "r0": 4, "x1": 0, "y1": -310, "r1": 70,
+            "stops": [
+              { "at": 0,    "color": "rgba(255,246,230,0.55)" },
+              { "at": 0.55, "color": "rgba(255,246,230,0)" },
+              { "at": 1,    "color": "rgba(40,22,14,0.22)" }
+            ] } },
         { "kind": "rect", "x": -68, "y": -345, "w": 136, "h": 28, "fill": { "palette": "hair" } },
         { "kind": "text", "x": 0, "y": -372, "text": "${name}", "fill": "#243033", "size": 22, "align": "center" }
       ] }
+    },
+    "license": { "type":"internal-generated","author":"Cucumber Engine","sourceUrl":"","commercialUse":true,"needAttribution":false }
+  }
+}
+```
+
+### Procedural 2.5D scene
+
+Three-layer split with parallax map. Background rects overshoot the canvas (`x: -200, w: 1680`) so pan never reveals empty space. Foreground contains an occluder.
+
+```json
+{
+  "ok": true,
+  "manifest": {
+    "assetId": "scene_kitchen_001",
+    "name": "清晨厨房",
+    "category": "visual",
+    "type": "scene",
+    "scope": "project",
+    "source": { "kind": "generated", "format": "procedural", "originalFile": "built-in" },
+    "files": { "preview": "procedural://scene_kitchen_001" },
+    "tags": ["kitchen","morning","interior"],
+    "metadata": {
+      "width": 1280, "height": 720,
+      "layers": ["background","midground","foreground"],
+      "shape": {
+        "preview": { "fit": "contain" },
+        "parallax": { "background": 0.45, "midground": 1, "foreground": 1.28 },
+        "primitives": [],
+        "layers": {
+          "background": [
+            { "kind": "rect", "x": -200, "y": 0, "w": 1680, "h": 720,
+              "fill": { "gradient": "linear", "x0": 0, "y0": 0, "x1": 0, "y1": 720,
+                "stops": [
+                  { "at": 0,    "color": "#fbe5c4" },
+                  { "at": 0.55, "color": "#e6c994" },
+                  { "at": 0.56, "color": "#7a5a3e" },
+                  { "at": 1,    "color": "#4e3725" }
+                ] } },
+            { "kind": "rect", "x": -200, "y": 0, "w": 1680, "h": 240,
+              "fill": { "gradient": "linear", "x0": 0, "y0": 0, "x1": 0, "y1": 240,
+                "stops": [
+                  { "at": 0, "color": "rgba(200,210,220,0.45)" },
+                  { "at": 1, "color": "rgba(200,210,220,0)" }
+                ] } }
+          ],
+          "midground": [
+            { "kind": "roundedRect", "x": 280, "y": 380, "w": 720, "h": 160, "r": 14, "fill": "#bf8d5c",
+              "shadow": { "blur": 18, "offsetY": 8, "color": "rgba(20,12,8,0.32)" } },
+            { "kind": "roundedRect", "x": 280, "y": 380, "w": 720, "h": 160, "r": 14,
+              "fill": { "gradient": "linear", "x0": 280, "y0": 380, "x1": 1000, "y1": 540,
+                "stops": [
+                  { "at": 0, "color": "rgba(255,235,200,0.22)" },
+                  { "at": 1, "color": "rgba(0,0,0,0.28)" }
+                ] } }
+          ],
+          "foreground": [
+            { "kind": "rect", "x": -100, "y": 684, "w": 1480, "h": 36,
+              "fill": { "gradient": "linear", "x0": 0, "y0": 684, "x1": 0, "y1": 720,
+                "stops": [
+                  { "at": 0, "color": "rgba(30,42,42,0.28)" },
+                  { "at": 1, "color": "rgba(30,42,42,0)" }
+                ] } }
+          ]
+        }
+      }
     },
     "license": { "type":"internal-generated","author":"Cucumber Engine","sourceUrl":"","commercialUse":true,"needAttribution":false }
   }

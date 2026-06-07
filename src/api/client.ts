@@ -70,47 +70,77 @@ export const api = {
    * Resolves with the final result message once the stream emits `done` or `error`.
    */
   generateAsset(
-    input: { prompt: string; scope: AssetScope; type: AssetType; category?: "visual" | "audio" },
+    input: { prompt: string; scope: AssetScope; type: AssetType; category?: "visual" | "audio"; referenceImagePaths?: string[]; suggestedId?: string; suggestedName?: string },
     onEvent: (ev: AiEvent) => void,
   ): { cancel: () => void; done: Promise<AiEvent> } {
-    const ac = new AbortController();
-    const done = (async (): Promise<AiEvent> => {
-      const res = await fetch(`${API_BASE}/ai/asset/generate`, {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "text/event-stream" },
-        body: JSON.stringify(input),
-        signal: ac.signal,
-      });
-      if (!res.ok || !res.body) throw new Error(`SSE failed: ${res.status}`);
-      const reader = res.body.getReader();
-      const dec = new TextDecoder();
-      let buf = "";
-      let last: AiEvent = { kind: "done" };
-      for (;;) {
-        const { value, done: streamDone } = await reader.read();
-        if (streamDone) break;
-        buf += dec.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buf.indexOf("\n\n")) !== -1) {
-          const raw = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
-          if (!dataLine) continue;
-          try {
-            const ev = JSON.parse(dataLine.slice(5).trim()) as AiEvent;
-            onEvent(ev);
-            last = ev;
-            if (ev.kind === "done" || ev.kind === "error") return ev;
-          } catch {
-            /* ignore malformed chunk */
-          }
-        }
-      }
-      return last;
-    })();
-    return { cancel: () => ac.abort(), done };
+    return streamSse(`${API_BASE}/ai/asset/generate`, input, onEvent);
+  },
+
+  generateSegment(
+    input: { prompt: string; projectId: string; durationSec?: number },
+    onEvent: (ev: AiEvent) => void,
+  ): { cancel: () => void; done: Promise<AiEvent> } {
+    return streamSse(`${API_BASE}/ai/segment/generate`, input, onEvent);
+  },
+
+  async uploadImportImages(files: File[]): Promise<{ paths: string[] }> {
+    const form = new FormData();
+    for (const f of files) form.append("files", f, f.name);
+    return jsonOrThrow<{ paths: string[] }>(
+      await fetch(`${API_BASE}/ai/import/upload`, { method: "POST", body: form }),
+    );
+  },
+
+  planImport(
+    input: { imagePaths: string[]; hint?: string },
+    onEvent: (ev: AiEvent) => void,
+  ): { cancel: () => void; done: Promise<AiEvent> } {
+    return streamSse(`${API_BASE}/ai/import/plan`, input, onEvent);
   },
 };
+
+function streamSse(
+  url: string,
+  payload: unknown,
+  onEvent: (ev: AiEvent) => void,
+): { cancel: () => void; done: Promise<AiEvent> } {
+  const ac = new AbortController();
+  const done = (async (): Promise<AiEvent> => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "text/event-stream" },
+      body: JSON.stringify(payload),
+      signal: ac.signal,
+    });
+    if (!res.ok || !res.body) throw new Error(`SSE failed: ${res.status}`);
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    let last: AiEvent = { kind: "done" };
+    for (;;) {
+      const { value, done: streamDone } = await reader.read();
+      if (streamDone) break;
+      buf += dec.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        const raw = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const dataLine = raw.split("\n").find((l) => l.startsWith("data:"));
+        if (!dataLine) continue;
+        try {
+          const ev = JSON.parse(dataLine.slice(5).trim()) as AiEvent;
+          onEvent(ev);
+          last = ev;
+          if (ev.kind === "done" || ev.kind === "error") return ev;
+        } catch {
+          /* ignore malformed chunk */
+        }
+      }
+    }
+    return last;
+  })();
+  return { cancel: () => ac.abort(), done };
+}
 
 export type AiEvent =
   | { kind: "start"; jobId: string }

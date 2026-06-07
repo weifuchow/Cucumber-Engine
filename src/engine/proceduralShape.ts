@@ -8,10 +8,20 @@
 // `${expr}` interpolation for state-dependent values like alpha.
 //
 // Supported primitives: roundedRect, rect, circle, ellipse, line, arc, polygon,
-// starBurst, text, transform (group with translate/rotate/scale + children).
+// starBurst, text, transform (group with translate/rotate/scale + children),
+// clip (use a shape as clipping region for its children).
+//
+// Any primitive may carry an optional `shadow: { blur, offsetX?, offsetY?, color }`
+// modifier — the renderer sets `ctx.shadowBlur/Color/Offset` for that one draw
+// call to create a soft drop shadow without an extra primitive.
 //
 // `when` clauses (per primitive) gate drawing on simple state predicates:
 //   `key == value`, `key != value`, `key in [a, b]`, `key not in [a, b]`.
+//
+// Scene shapes may use the multi-layer form `{ layers: { background, midground,
+// foreground }, parallax: { background, midground, foreground } }`. The
+// PreviewCanvas walks each layer in z-order, applying the matching parallax
+// factor to the camera transform so a single camera pan reads as depth.
 
 export type NumExpr = number | string;
 
@@ -37,9 +47,16 @@ export type ColorSpec =
       stops: Array<{ at: number; color: string }>;
     };
 
+export interface ShadowSpec {
+  blur: NumExpr;
+  offsetX?: NumExpr;
+  offsetY?: NumExpr;
+  color: string;
+}
+
 export type Primitive =
-  | { kind: "roundedRect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr; r: NumExpr; fill: ColorSpec }
-  | { kind: "rect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr; fill: ColorSpec }
+  | { kind: "roundedRect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr; r: NumExpr; fill?: ColorSpec; stroke?: ColorSpec; lineWidth?: NumExpr; shadow?: ShadowSpec }
+  | { kind: "rect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr; fill?: ColorSpec; stroke?: ColorSpec; lineWidth?: NumExpr; shadow?: ShadowSpec }
   | {
       kind: "circle";
       cx: NumExpr;
@@ -48,6 +65,7 @@ export type Primitive =
       fill?: ColorSpec;
       stroke?: ColorSpec;
       lineWidth?: NumExpr;
+      shadow?: ShadowSpec;
     }
   | {
       kind: "ellipse";
@@ -61,6 +79,7 @@ export type Primitive =
       fill?: ColorSpec;
       stroke?: ColorSpec;
       lineWidth?: NumExpr;
+      shadow?: ShadowSpec;
     }
   | {
       kind: "line";
@@ -71,6 +90,7 @@ export type Primitive =
       stroke: ColorSpec;
       lineWidth: NumExpr;
       lineCap?: CanvasLineCap;
+      shadow?: ShadowSpec;
     }
   | {
       kind: "arc";
@@ -82,6 +102,7 @@ export type Primitive =
       fill?: ColorSpec;
       stroke?: ColorSpec;
       lineWidth?: NumExpr;
+      shadow?: ShadowSpec;
     }
   | {
       kind: "polygon";
@@ -90,6 +111,7 @@ export type Primitive =
       stroke?: ColorSpec;
       lineWidth?: NumExpr;
       closed?: boolean;
+      shadow?: ShadowSpec;
     }
   | {
       kind: "starBurst";
@@ -102,6 +124,7 @@ export type Primitive =
       fill?: ColorSpec;
       stroke?: ColorSpec;
       lineWidth?: NumExpr;
+      shadow?: ShadowSpec;
     }
   | {
       kind: "text";
@@ -112,6 +135,7 @@ export type Primitive =
       size: NumExpr;
       align?: CanvasTextAlign;
       font?: string;
+      shadow?: ShadowSpec;
     }
   | {
       kind: "transform";
@@ -119,7 +143,18 @@ export type Primitive =
       rotate?: NumExpr;
       scale?: NumExpr | { x: NumExpr; y: NumExpr };
       children: ConditionalPrimitive[];
+    }
+  | {
+      kind: "clip";
+      shape: ClipShape;
+      children: ConditionalPrimitive[];
     };
+
+export type ClipShape =
+  | { kind: "rect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr }
+  | { kind: "roundedRect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr; r: NumExpr }
+  | { kind: "circle"; cx: NumExpr; cy: NumExpr; r: NumExpr }
+  | { kind: "ellipse"; cx: NumExpr; cy: NumExpr; rx: NumExpr; ry: NumExpr; rotation?: NumExpr };
 
 export type ConditionalPrimitive = Primitive & { when?: string };
 
@@ -128,13 +163,54 @@ export interface ShapePreviewHint {
   scale?: number;
 }
 
+export type SceneLayerKey = "background" | "midground" | "foreground";
+
 export interface ProceduralShape {
   scale?: number;
   preview?: ShapePreviewHint;
   primitives: ConditionalPrimitive[];
+  /**
+   * Optional multi-layer split for scenes. When present, the PreviewCanvas
+   * walks each layer in bg→mid→fg order with its own parallax factor; the
+   * combined output is the visual scene. `primitives` is still used as a
+   * fallback for assets that pre-date the layer split.
+   */
+  layers?: Partial<Record<SceneLayerKey, ConditionalPrimitive[]>>;
+  /**
+   * Parallax factor per layer relative to camera translation. 1.0 = move with
+   * the camera 1:1 (default). <1 = background (slower than camera). >1 =
+   * foreground (faster than camera).
+   */
+  parallax?: Partial<Record<SceneLayerKey, number>>;
 }
 
 export type ShapeState = Record<string, string | number | boolean | undefined>;
+
+export const DEFAULT_PARALLAX: Record<SceneLayerKey, number> = {
+  background: 0.5,
+  midground: 1,
+  foreground: 1.25,
+};
+
+export function getSceneLayerPrimitives(
+  shape: ProceduralShape,
+  layer: SceneLayerKey,
+): ConditionalPrimitive[] {
+  const layered = shape.layers?.[layer];
+  if (layered && layered.length) return layered;
+  // Back-compat: if no layers declared, the legacy flat `primitives` array
+  // counts as midground only.
+  if (!shape.layers && layer === "midground") return shape.primitives;
+  return [];
+}
+
+export function getParallaxFactor(shape: ProceduralShape, layer: SceneLayerKey): number {
+  return shape.parallax?.[layer] ?? DEFAULT_PARALLAX[layer];
+}
+
+export function hasSceneLayers(shape: ProceduralShape): boolean {
+  return Boolean(shape.layers && (shape.layers.background?.length || shape.layers.midground?.length || shape.layers.foreground?.length));
+}
 
 export function drawShape(
   ctx: CanvasRenderingContext2D,
@@ -148,6 +224,25 @@ export function drawShape(
   ctx.restore();
 }
 
+/**
+ * Draw a specific scene layer (background / midground / foreground). Falls
+ * back to legacy flat `primitives` when the shape pre-dates the layer split.
+ */
+export function drawSceneLayer(
+  ctx: CanvasRenderingContext2D,
+  shape: ProceduralShape,
+  palette: Record<string, string>,
+  state: ShapeState,
+  layer: SceneLayerKey,
+) {
+  const prims = getSceneLayerPrimitives(shape, layer);
+  if (!prims.length) return;
+  ctx.save();
+  if (shape.scale && shape.scale !== 1) ctx.scale(shape.scale, shape.scale);
+  for (const prim of prims) drawConditional(ctx, prim, palette, state);
+  ctx.restore();
+}
+
 function drawConditional(
   ctx: CanvasRenderingContext2D,
   prim: ConditionalPrimitive,
@@ -155,6 +250,17 @@ function drawConditional(
   state: ShapeState,
 ) {
   if (!evaluateWhen(prim.when, state)) return;
+  const shadow = (prim as { shadow?: ShadowSpec }).shadow;
+  if (shadow) {
+    ctx.save();
+    ctx.shadowBlur = evalNum(shadow.blur, state);
+    ctx.shadowOffsetX = evalNum(shadow.offsetX ?? 0, state);
+    ctx.shadowOffsetY = evalNum(shadow.offsetY ?? 0, state);
+    ctx.shadowColor = interpolate(shadow.color, state);
+    drawPrimitive(ctx, prim, palette, state);
+    ctx.restore();
+    return;
+  }
   drawPrimitive(ctx, prim, palette, state);
 }
 
@@ -174,18 +280,18 @@ function drawPrimitive(
         evalNum(prim.h, state),
         evalNum(prim.r, state),
       );
-      ctx.fillStyle = resolveColor(ctx, prim.fill, palette, state);
-      ctx.fill();
+      strokeFill(ctx, prim, palette, state);
       return;
     }
     case "rect": {
-      ctx.fillStyle = resolveColor(ctx, prim.fill, palette, state);
-      ctx.fillRect(
+      ctx.beginPath();
+      ctx.rect(
         evalNum(prim.x, state),
         evalNum(prim.y, state),
         evalNum(prim.w, state),
         evalNum(prim.h, state),
       );
+      strokeFill(ctx, prim, palette, state);
       return;
     }
     case "circle": {
@@ -298,6 +404,43 @@ function drawPrimitive(
       ctx.restore();
       return;
     }
+    case "clip": {
+      ctx.save();
+      ctx.beginPath();
+      const c = prim.shape;
+      switch (c.kind) {
+        case "rect":
+          ctx.rect(evalNum(c.x, state), evalNum(c.y, state), evalNum(c.w, state), evalNum(c.h, state));
+          break;
+        case "roundedRect":
+          ctx.roundRect(
+            evalNum(c.x, state),
+            evalNum(c.y, state),
+            evalNum(c.w, state),
+            evalNum(c.h, state),
+            evalNum(c.r, state),
+          );
+          break;
+        case "circle":
+          ctx.arc(evalNum(c.cx, state), evalNum(c.cy, state), evalNum(c.r, state), 0, Math.PI * 2);
+          break;
+        case "ellipse":
+          ctx.ellipse(
+            evalNum(c.cx, state),
+            evalNum(c.cy, state),
+            evalNum(c.rx, state),
+            evalNum(c.ry, state),
+            evalNum(c.rotation ?? 0, state),
+            0,
+            Math.PI * 2,
+          );
+          break;
+      }
+      ctx.clip();
+      for (const child of prim.children) drawConditional(ctx, child, palette, state);
+      ctx.restore();
+      return;
+    }
   }
 }
 
@@ -318,6 +461,28 @@ function strokeFill(
   }
 }
 
+// Per-context cache of CanvasGradient objects. A gradient spec is "static"
+// when all of its numeric fields are literals AND none of its stop colors
+// contain a `${...}` interpolation; for those, we can reuse the same
+// CanvasGradient object across frames instead of rebuilding it on every
+// draw call. Even a modestly busy scene rebuilds dozens of gradients per
+// frame without this; with it, those collapse into a single creation.
+type GradientSpec = Extract<ColorSpec, { gradient: "linear" | "radial" }>;
+const gradientCache = new WeakMap<CanvasRenderingContext2D, WeakMap<GradientSpec, CanvasGradient>>();
+
+function isLiteralNum(value: NumExpr | undefined): boolean {
+  return typeof value !== "string";
+}
+
+function isGradientStatic(spec: GradientSpec): boolean {
+  if (!isLiteralNum(spec.x0) || !isLiteralNum(spec.y0) || !isLiteralNum(spec.x1) || !isLiteralNum(spec.y1)) return false;
+  if (spec.gradient === "radial" && (!isLiteralNum(spec.r0) || !isLiteralNum(spec.r1))) return false;
+  for (const stop of spec.stops) {
+    if (stop.color.includes("${")) return false;
+  }
+  return true;
+}
+
 function resolveColor(
   ctx: CanvasRenderingContext2D,
   spec: ColorSpec,
@@ -329,6 +494,19 @@ function resolveColor(
     const base = palette[spec.palette] ?? "#000000";
     return spec.darken ? darken(base, spec.darken) : base;
   }
+
+  // Try the static gradient cache first — most scene/character gradients
+  // never change per frame, so this is the dominant case.
+  let ctxCache = gradientCache.get(ctx);
+  if (!ctxCache) {
+    ctxCache = new WeakMap();
+    gradientCache.set(ctx, ctxCache);
+  }
+  if (isGradientStatic(spec)) {
+    const cached = ctxCache.get(spec);
+    if (cached) return cached;
+  }
+
   if (spec.gradient === "linear") {
     const g = ctx.createLinearGradient(
       evalNum(spec.x0, state),
@@ -337,6 +515,7 @@ function resolveColor(
       evalNum(spec.y1, state),
     );
     for (const stop of spec.stops) g.addColorStop(stop.at, interpolate(stop.color, state));
+    if (isGradientStatic(spec)) ctxCache.set(spec, g);
     return g;
   }
   // radial
@@ -349,6 +528,7 @@ function resolveColor(
     evalNum(spec.r1, state),
   );
   for (const stop of spec.stops) g.addColorStop(stop.at, interpolate(stop.color, state));
+  if (isGradientStatic(spec)) ctxCache.set(spec, g);
   return g;
 }
 
