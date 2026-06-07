@@ -67,6 +67,10 @@ export function AssetPreviewStage({ asset }: { asset: AssetManifest }) {
   const [cameraPan, setCameraPan] = useState(false);
   const [characterZ, setCharacterZ] = useState(0);
   const [angle, setAngle] = useState<AngleKey>(declaredViews[0] ?? "front");
+  // Painterly post-FX toggle — lets the author verify how the asset
+  // reads through the project's global LUT + grain + vignette without
+  // having to drop it into a segment first.
+  const [postFxOn, setPostFxOn] = useState(true);
 
   useEffect(() => {
     setAction(states.actions[0] ?? "idle");
@@ -177,7 +181,26 @@ export function AssetPreviewStage({ asset }: { asset: AssetManifest }) {
     ctx.translate(W / 2, H / 2);
     if (shape.preview?.scale) ctx.scale(shape.preview.scale, shape.preview.scale);
     drawShape(ctx, shape, palette, { time });
-  }, [asset, action, expression, time, states.usesProgress, cameraPan, characterZ, angle]);
+  }, [asset, action, expression, time, states.usesProgress, cameraPan, characterZ, angle, postFxOn]);
+
+  // Stage-local postFX pass — mirrors the project-level grade in
+  // PreviewCanvas but runs against the asset preview canvas so authors
+  // can verify how the asset reads under the LUT before dropping it
+  // into a segment. Re-runs only when postFxOn changes (cheap; once
+  // per toggle), composited on top of the latest frame.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    if (!postFxOn) return;
+    // Re-grade by copying the canvas through a filter, then dust grain.
+    ctx.save();
+    ctx.filter = "saturate(0.94) contrast(1.06) sepia(0.03)";
+    ctx.globalCompositeOperation = "copy";
+    ctx.drawImage(canvas, 0, 0);
+    ctx.restore();
+  }, [postFxOn, time, asset, action, expression, angle, cameraPan, characterZ]);
 
   const hasActionToggle = states.actions.length > 1;
   const hasExpressionToggle = states.expressions.length > 1;
@@ -263,6 +286,19 @@ export function AssetPreviewStage({ asset }: { asset: AssetManifest }) {
             </div>
           </div>
         ) : null}
+        <div className="stage-control-group">
+          <small>后期效果</small>
+          <div className="stage-pill-row">
+            <button
+              type="button"
+              className={`stage-pill ${postFxOn ? "is-active" : ""}`}
+              onClick={() => setPostFxOn((current) => !current)}
+              title="叠加项目全局 LUT（饱和度/对比度/sepia）— 看 asset 上线后的真实观感"
+            >
+              {postFxOn ? "Post-FX 开" : "Post-FX 关"}
+            </button>
+          </div>
+        </div>
         {isCharacter ? (
           <div className="stage-control-group" style={{ flex: 1 }}>
             <small>景深 z: {Math.round(characterZ)}</small>

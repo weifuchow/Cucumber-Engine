@@ -110,6 +110,30 @@ function collectAudibleEvents(
         volume: clamp((event.volume ?? 80) / 100, 0, 1),
         loop: false,
       });
+    } else if (event.type === "characterAction") {
+      // Auto-soundEffect: if the character manifest declares a
+      // `metadata.soundEffectIds[<actionName>]`, treat the action as
+      // an implicit soundEffect event without requiring the segment to
+      // also emit one explicitly. The skill docs promise this; this is
+      // where the promise becomes runtime behavior.
+      const character = allAssets.find((a) => a.assetId === event.target);
+      const sfxMap = (character?.metadata as { soundEffectIds?: Record<string, string> } | undefined)?.soundEffectIds;
+      const sfxId = sfxMap?.[event.action.name];
+      if (!sfxId) continue;
+      const sfxAsset = allAssets.find((a) => a.assetId === sfxId);
+      const url = sfxAsset?.files?.sourceUrl ?? sfxAsset?.files?.preview;
+      if (!url || !url.startsWith("http") && !url.startsWith("/")) continue;
+      const meta = sfxAsset?.metadata as { durationSec?: number } | undefined;
+      const sfxDur = typeof meta?.durationSec === "number" ? meta.durationSec : 0.8;
+      if (time < event.time || time >= event.time + sfxDur + 0.05) continue;
+      out.push({
+        key: `autoSfx:${i}`,
+        startTime: event.time,
+        duration: sfxDur,
+        audioUrl: url,
+        volume: 0.7,
+        loop: false,
+      });
     }
   }
   return out;
@@ -304,7 +328,7 @@ export function PreviewCanvas({ project, library, time, playing = true }: Previe
     // HUD overlay so subtitles + timer stay crisp.
     paintPostFX(ctx, project);
 
-    drawHud(ctx, state.caption, time, state.camera.mode);
+    drawHud(ctx, state.caption, time, state.camera.mode, state.captionStyle);
   }, [library, project, time]);
 
   // ---- audio playback (dialogue / narration / bgm / sfx) ------------------
@@ -509,7 +533,15 @@ function paintPostFX(ctx: CanvasRenderingContext2D, project: Project) {
   }
 }
 
-function drawHud(ctx: CanvasRenderingContext2D, caption: string, time: number, mode: string) {
+import type { SubtitleStyle } from "../engine/timeline";
+
+function drawHud(
+  ctx: CanvasRenderingContext2D,
+  caption: string,
+  time: number,
+  mode: string,
+  style: SubtitleStyle | null,
+) {
   ctx.fillStyle = "rgba(20, 30, 32, 0.74)";
   roundedRect(ctx, 34, 30, 245, 46, 12);
   ctx.fillStyle = "#eef7f4";
@@ -518,12 +550,52 @@ function drawHud(ctx: CanvasRenderingContext2D, caption: string, time: number, m
   ctx.fillText(`${time.toFixed(1)}s · ${mode}`, 55, 61);
 
   if (!caption) return;
-  ctx.fillStyle = "rgba(19, 25, 28, 0.78)";
-  roundedRect(ctx, 220, 612, 840, 58, 16);
-  ctx.fillStyle = "#fff8ed";
-  ctx.font = "28px sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillText(caption, 640, 650);
+
+  // Style defaults match the original lower-third look (bottom-center,
+  // white-on-dark) so legacy subtitles render unchanged. Any field the
+  // event sets in `style` overrides the corresponding default.
+  const position = style?.position ?? "bottom";
+  const align    = style?.align    ?? "center";
+  const color    = style?.color    ?? "#fff8ed";
+  const bgColor  = style?.bgColor  ?? "rgba(19, 25, 28, 0.78)";
+  const fontSize = style?.fontSize ?? 28;
+  const weight   = style?.weight   ?? "normal";
+
+  // Measure to size the plate around the text.
+  ctx.font = `${typeof weight === "number" ? weight : weight === "bold" ? "700" : "400"} ${fontSize}px sans-serif`;
+  const metrics = ctx.measureText(caption);
+  const textWidth = metrics.width;
+  const padX = 24;
+  const padY = 14;
+  const plateW = Math.min(width - 80, textWidth + padX * 2);
+  const plateH = fontSize + padY * 2;
+
+  // Vertical placement.
+  let plateY: number;
+  if (position === "top") plateY = 56;
+  else if (position === "center") plateY = (height - plateH) / 2;
+  else plateY = height - plateH - 36;
+
+  // Horizontal placement keys off `align`.
+  let plateX: number;
+  let textX: number;
+  if (align === "left") {
+    plateX = 40;
+    textX = plateX + padX;
+  } else if (align === "right") {
+    plateX = width - 40 - plateW;
+    textX = plateX + plateW - padX;
+  } else {
+    plateX = (width - plateW) / 2;
+    textX = width / 2;
+  }
+
+  ctx.fillStyle = bgColor;
+  roundedRect(ctx, plateX, plateY, plateW, plateH, 16);
+  ctx.fillStyle = color;
+  ctx.textAlign = align;
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(caption, textX, plateY + plateH - padY - 4);
 }
 
 function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {

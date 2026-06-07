@@ -44,7 +44,23 @@ export interface PreviewState {
   effects: EffectRenderState[];
   camera: { x: number; y: number; zoom: number; mode: string };
   caption: string;
+  /**
+   * Optional rendering style for the active subtitle. Populated when the
+   * active caption is a `subtitle` event with a `style` field; null
+   * otherwise (dialogue/narration captions fall back to the default
+   * bottom-center lower-third in PreviewCanvas).
+   */
+  captionStyle: SubtitleStyle | null;
 }
+
+export type SubtitleStyle = {
+  position?: "bottom" | "top" | "center";
+  align?: "left" | "center" | "right";
+  color?: string;
+  bgColor?: string;
+  fontSize?: number;
+  weight?: "normal" | "bold" | number;
+};
 
 const defaultCamera = { x: 640, y: 360, zoom: 1, mode: "wide" };
 
@@ -210,7 +226,7 @@ export function evaluateTimeline(project: Project, library: AssetLibrary, time: 
 
   const characters = [...characterMap.values()].filter((character) => character.visible);
   const camera = evaluateCamera(segment.timeline, characters, time);
-  const caption = evaluateCaption(segment.timeline, time);
+  const { text: caption, style: captionStyle } = evaluateCaption(segment.timeline, time);
   const effects = segment.timeline
     .filter((event): event is Extract<TimelineEvent, { type: "effectPlay" }> => event.type === "effectPlay")
     .filter((event) => time >= event.time && time <= event.time + event.duration)
@@ -227,6 +243,7 @@ export function evaluateTimeline(project: Project, library: AssetLibrary, time: 
     effects,
     camera,
     caption,
+    captionStyle,
   };
 }
 
@@ -241,7 +258,7 @@ function getLatestSceneId(events: TimelineEvent[], time: number, fallback: strin
   return sceneChange?.sceneId ?? fallback;
 }
 
-function evaluateCaption(events: TimelineEvent[], time: number) {
+function evaluateCaption(events: TimelineEvent[], time: number): { text: string; style: SubtitleStyle | null } {
   const captions = events.filter(
     (event): event is Extract<TimelineEvent, { type: "subtitle" | "dialogue" | "narration" }> =>
       (event.type === "subtitle" || event.type === "dialogue" || event.type === "narration") &&
@@ -249,10 +266,10 @@ function evaluateCaption(events: TimelineEvent[], time: number) {
       time <= event.time + event.duration,
   );
   const latest = captions.at(-1);
-  if (!latest) return "";
-  if (latest.type === "dialogue") return latest.text ?? "";
-  if (latest.type === "narration") return latest.text ?? "";
-  return latest.text;
+  if (!latest) return { text: "", style: null };
+  if (latest.type === "dialogue") return { text: latest.text ?? "", style: null };
+  if (latest.type === "narration") return { text: latest.text ?? "", style: null };
+  return { text: latest.text, style: latest.style ?? null };
 }
 
 function evaluateCamera(events: TimelineEvent[], characters: CharacterRenderState[], time: number) {

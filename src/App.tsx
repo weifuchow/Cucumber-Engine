@@ -1054,9 +1054,30 @@ function SegmentEditorModal({
                 <p className="eyebrow">预览</p>
                 <h3>点击画面播放 / 暂停</h3>
               </div>
-              <div className="asset-chip-row">
+              <div className="asset-chip-row" style={{ alignItems: "center" }}>
                 <span>{time.toFixed(1)}s</span>
                 <span>{segment.duration}s</span>
+                <button
+                  type="button"
+                  className="icon-button"
+                  title="导出当前帧为 PNG"
+                  onClick={() => {
+                    const canvas = document.querySelector(".preview-canvas") as HTMLCanvasElement | null;
+                    if (!canvas) return;
+                    canvas.toBlob((blob) => {
+                      if (!blob) return;
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      const stamp = `${segment.segmentId}_t${time.toFixed(2)}s`.replace(/[^a-z0-9_.-]/gi, "_");
+                      a.download = `frame_${stamp}.png`;
+                      a.click();
+                      setTimeout(() => URL.revokeObjectURL(url), 1000);
+                    }, "image/png");
+                  }}
+                >
+                  <Download size={16} />
+                </button>
               </div>
             </div>
             <button className="preview-click-target" type="button" onClick={() => onPlayingChange((current) => !current)} title={playing ? "暂停" : "播放"}>

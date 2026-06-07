@@ -321,7 +321,32 @@ export type TimelineEvent =
       fps: number;
       duration: number;
     }
-  | { time: number; type: "subtitle"; text: string; duration: number }
+  | {
+      time: number;
+      type: "subtitle";
+      text: string;
+      duration: number;
+      /**
+       * Optional render style. Defaults to bottom-center white-on-dark
+       * lower-third when omitted (backward-compat with the original
+       * single-style renderer).
+       *
+       *   position — vertical placement of the subtitle box
+       *   align    — text alignment
+       *   color    — text color, any CSS color string
+       *   bgColor  — background plate color (alpha encouraged)
+       *   fontSize — px
+       *   weight   — CSS font-weight
+       */
+      style?: {
+        position?: "bottom" | "top" | "center";
+        align?: "left" | "center" | "right";
+        color?: string;
+        bgColor?: string;
+        fontSize?: number;
+        weight?: "normal" | "bold" | number;
+      };
+    }
   | { time: number; type: "bgmPlay"; assetId: string; volume: number }
   | {
       time: number;
