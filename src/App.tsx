@@ -6,8 +6,8 @@ import {
   ExternalLink,
   Eye,
   FileJson,
+  FilePlus2,
   FolderInput,
-  ImagePlus,
   Pause,
   Play,
   RotateCcw,
@@ -84,6 +84,7 @@ function collectTimelineUsedAssetIds(project: Project): Set<string> {
 
 export function App() {
   const [project, setProject] = useState<Project>(sampleProject);
+  const [availableProjects, setAvailableProjects] = useState<Project[]>([]);
   const [library, setLibrary] = useState<AssetLibrary>(sampleLibrary);
   const [activeModule, setActiveModule] = useState<ModuleId>("assets");
   const [time, setTime] = useState(0);
@@ -94,6 +95,7 @@ export function App() {
   const [segmentEditorOpen, setSegmentEditorOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState<null | { scope: AssetScope }>(null);
   const [aiSegmentOpen, setAiSegmentOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [batchImportOpen, setBatchImportOpen] = useState<null | { scope: AssetScope }>(null);
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
 
@@ -114,6 +116,7 @@ export function App() {
           scenes: scenes.length ? scenes : current.scenes,
         }));
       }
+      setAvailableProjects(projects);
       const persisted = projects.find((p) => p.projectId === project.projectId) ?? projects[0];
       if (persisted) setProject(persisted);
       setNotice(`已从后端载入 ${global.length + projectAssets.length} 个资产、${scenes.length} 个场景、${projects.length} 个项目。`);
@@ -129,6 +132,13 @@ export function App() {
     void reloadLibraryFromApi();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Clear the one-line status notice whenever the user switches modules.
+  // Otherwise a "已切换到「X 项目」" message set in the project module would
+  // linger inside the unrelated asset / export modules.
+  useEffect(() => {
+    setNotice("");
+  }, [activeModule]);
 
   // Debounced auto-save of the current project to the backend.
   // Only fires after the initial load completes — avoids overwriting DB with sample state.
@@ -475,6 +485,41 @@ export function App() {
           <div className="actions">
             {activeModule === "project" ? (
               <>
+                <label className="project-picker" style={{
+                  display: "flex", flexDirection: "column", gap: 2,
+                  marginRight: 4, minWidth: 240,
+                }}>
+                  <small style={{ fontSize: 11, color: "var(--muted, #666)" }}>当前项目</small>
+                  <select
+                    value={project.projectId}
+                    onChange={(e) => {
+                      const next = availableProjects.find((p) => p.projectId === e.target.value);
+                      if (next) {
+                        setProject(next);
+                        setTime(0);
+                        setPlaying(false);
+                        setNotice(`已切换到「${next.title}」`);
+                      }
+                    }}
+                    style={{
+                      padding: "6px 10px", borderRadius: 8,
+                      border: "1px solid var(--border, #ccc)", fontSize: 13,
+                      background: "var(--surface, #fff)",
+                    }}
+                  >
+                    {availableProjects.length === 0 ? (
+                      <option value={project.projectId}>{project.title}</option>
+                    ) : availableProjects.map((p) => (
+                      <option key={p.projectId} value={p.projectId}>
+                        {p.title}{p.config?.styleBar ? ` · ${p.config.styleBar}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button type="button" onClick={() => setNewProjectOpen(true)} title="新建一个项目">
+                  <FilePlus2 size={17} />
+                  <span>新建项目</span>
+                </button>
                 <button type="button" onClick={createChapter}>
                   <Sparkles size={17} />
                   <span>新章节</span>
@@ -502,11 +547,8 @@ export function App() {
               notice={notice}
               globalAssets={library.globalAssets}
               selectedAssetId={selectedAssetId}
-              onImageImport={(file) => queueImport("image", file, "global")}
-              onSceneImport={handleSceneImport}
               onSpineImport={(file) => handleSpineImport(file, "global")}
               onOpenBatchImport={() => setBatchImportOpen({ scope: "global" })}
-              onSpriteSheetImport={(file) => queueImport("spritesheet", file, "global")}
               onOpenAi={() => setAiOpen({ scope: "global" })}
               onDeleteAsset={handleDeleteAsset}
               onSelectAsset={(assetId) => {
@@ -529,10 +571,8 @@ export function App() {
               onUpdateProjectConfig={updateProjectConfig}
               onUpdateChapter={updateChapter}
               onUpdateSegment={updateSegment}
-              onImageImport={(file) => queueImport("image", file, "project")}
               onSpineImport={(file) => handleSpineImport(file, "project")}
               onOpenBatchImport={() => setBatchImportOpen({ scope: "project" })}
-              onSpriteSheetImport={(file) => queueImport("spritesheet", file, "project")}
               onOpenAi={() => setAiOpen({ scope: "project" })}
               onDeleteAsset={handleDeleteAsset}
               onSelectAsset={(assetId) => {
@@ -596,6 +636,21 @@ export function App() {
           onAccept={acceptAiSegment}
         />
       ) : null}
+      {newProjectOpen ? (
+        <NewProjectModal
+          existingIds={availableProjects.map((p) => p.projectId)}
+          onClose={() => setNewProjectOpen(false)}
+          onCreated={async (created) => {
+            await api.saveProject(created);
+            await reloadLibraryFromApi();
+            setProject(created);
+            setTime(0);
+            setPlaying(false);
+            setNewProjectOpen(false);
+            setNotice(`已创建项目「${created.title}」并切换。`);
+          }}
+        />
+      ) : null}
       {batchImportOpen ? (
         <BatchImportPlanner
           defaultScope={batchImportOpen.scope}
@@ -620,11 +675,8 @@ function AssetLibraryModule({
   notice,
   globalAssets,
   selectedAssetId,
-  onImageImport,
-  onSceneImport,
   onSpineImport,
   onOpenBatchImport,
-  onSpriteSheetImport,
   onSelectAsset,
   onOpenAi,
   onDeleteAsset,
@@ -632,11 +684,8 @@ function AssetLibraryModule({
   notice: string;
   globalAssets: AssetManifest[];
   selectedAssetId: string;
-  onImageImport: (file: File | undefined) => void;
-  onSceneImport: (file: File | undefined) => void;
   onSpineImport: (file: File | undefined) => void;
   onOpenBatchImport: () => void;
-  onSpriteSheetImport: (file: File | undefined) => void;
   onSelectAsset: (assetId: string) => void;
   onOpenAi: () => void;
   onDeleteAsset: (assetId: string) => void;
@@ -648,35 +697,20 @@ function AssetLibraryModule({
           <Boxes size={18} />
           <span>通用素材导入</span>
         </div>
-        <label className="file-button">
-          <ImagePlus size={17} />
-          <span>导入图片</span>
-          <input type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={(event) => onImageImport(event.target.files?.[0])} />
-        </label>
-        <button type="button" className="file-button ai-trigger" onClick={onOpenBatchImport} title="选择多张图，AI 自动归类生成">
+        <button type="button" className="file-button ai-trigger" onClick={onOpenBatchImport} title="选择 1 张或多张图，AI 自动归类生成 manifest（覆盖单图导入场景）">
           <Sparkles size={17} />
           <span>AI 批量图像导入</span>
         </button>
-        <label className="file-button">
-          <FileJson size={17} />
-          <span>导入场景 JSON</span>
-          <input type="file" accept=".json,application/json" onChange={(event) => onSceneImport(event.target.files?.[0])} />
-        </label>
         <label className="file-button" title="Spine 2D 骨骼动画格式（Spine 3.x / 4.x JSON 导出）">
           <FileJson size={17} />
           <span>导入 Spine JSON</span>
           <input type="file" accept=".json,application/json" onChange={(event) => onSpineImport(event.target.files?.[0])} />
         </label>
-        <label className="file-button">
-          <FolderInput size={17} />
-          <span>导入图集 JSON</span>
-          <input type="file" accept=".json,application/json" onChange={(event) => onSpriteSheetImport(event.target.files?.[0])} />
-        </label>
         <button type="button" className="file-button ai-trigger" onClick={onOpenAi}>
           <Sparkles size={17} />
           <span>AI 生成资产</span>
         </button>
-        <p className="notice inline-notice">{notice}</p>
+        {notice ? <p className="notice inline-notice">{notice}</p> : null}
       </section>
 
       <AssetTypeGallery
@@ -703,10 +737,8 @@ function ProjectModule({
   onUpdateProjectConfig,
   onUpdateChapter,
   onUpdateSegment,
-  onImageImport,
   onSpineImport,
   onOpenBatchImport,
-  onSpriteSheetImport,
   onOpenAi,
   onDeleteAsset,
   onSelectAsset,
@@ -723,10 +755,8 @@ function ProjectModule({
   onUpdateProjectConfig: (patch: Partial<Project["config"]>) => void;
   onUpdateChapter: (chapterId: string, patch: Partial<Chapter>) => void;
   onUpdateSegment: (chapterId: string, segmentId: string, patch: Partial<Segment>) => void;
-  onImageImport: (file: File | undefined) => void;
   onSpineImport: (file: File | undefined) => void;
   onOpenBatchImport: () => void;
-  onSpriteSheetImport: (file: File | undefined) => void;
   onOpenAi: () => void;
   onDeleteAsset: (assetId: string) => void;
   onSelectAsset: (assetId: string) => void;
@@ -765,12 +795,7 @@ function ProjectModule({
             <small>{library.projectAssets.length}</small>
           </div>
           <div className="project-assets-toolbar">
-            <label className="file-button">
-              <ImagePlus size={16} />
-              <span>导入图片</span>
-              <input type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={(event) => onImageImport(event.target.files?.[0])} />
-            </label>
-            <button type="button" className="file-button ai-trigger" onClick={onOpenBatchImport}>
+            <button type="button" className="file-button ai-trigger" onClick={onOpenBatchImport} title="选择 1 张或多张图，AI 自动归类生成 manifest">
               <Sparkles size={16} />
               <span>AI 批量图像导入</span>
             </button>
@@ -778,11 +803,6 @@ function ProjectModule({
               <FileJson size={16} />
               <span>导入 Spine JSON</span>
               <input type="file" accept=".json,application/json" onChange={(event) => onSpineImport(event.target.files?.[0])} />
-            </label>
-            <label className="file-button">
-              <FolderInput size={16} />
-              <span>导入图集 JSON</span>
-              <input type="file" accept=".json,application/json" onChange={(event) => onSpriteSheetImport(event.target.files?.[0])} />
             </label>
             <button type="button" className="file-button ai-trigger" onClick={onOpenAi}>
               <Sparkles size={16} />
@@ -1040,7 +1060,7 @@ function SegmentEditorModal({
               </div>
             </div>
             <button className="preview-click-target" type="button" onClick={() => onPlayingChange((current) => !current)} title={playing ? "暂停" : "播放"}>
-              <PreviewCanvas project={project} library={library} time={time} />
+              <PreviewCanvas project={project} library={library} time={time} playing={playing} />
             </button>
             <section className="control-strip">
               <button className="icon-button" type="button" title={playing ? "暂停" : "播放"} onClick={() => onPlayingChange((current) => !current)}>
@@ -1117,6 +1137,16 @@ function SegmentEditorModal({
                 <span>{segment.name}</span>
                 <span>{chapter.sceneId}</span>
               </div>
+              <BatchAudioGenerator
+                projectId={project.projectId}
+                segmentId={segment.segmentId}
+                eventCount={segment.timeline.filter((e) => (e.type === "dialogue" || e.type === "narration") && (e as { text?: string }).text).length}
+                hasAudioCount={segment.timeline.filter((e) => (e.type === "dialogue" || e.type === "narration") && (e as { audioUrl?: string }).audioUrl).length}
+                onSegmentUpdated={(updatedSegment) => onUpdateSegment(chapter.chapterId, segment.segmentId, {
+                  timeline: updatedSegment.timeline,
+                  duration: Math.max(updatedSegment.duration, segment.duration),
+                })}
+              />
               <InlineTimelineEvents events={segment.timeline} selectedEventIndex={selectedEventIndex} onSelectEvent={selectAndSeek} />
               <TimelineEventEditor
                 event={selectedEvent}
@@ -1127,6 +1157,219 @@ function SegmentEditorModal({
           </section>
         </section>
       </section>
+    </div>
+  );
+}
+
+/**
+ * Modal-form project creation. Picks a starter template (blank / luoxiaohei),
+ * collects core fields (id, title, resolution, fps, styleBar), validates that
+ * the id is unique among existing projects, then hands the new Project to the
+ * parent for persistence + auto-switch.
+ *
+ * The id auto-derives from the title (slugified + timestamp) but is editable.
+ */
+function NewProjectModal({
+  existingIds,
+  onCreated,
+  onClose,
+}: {
+  existingIds: string[];
+  onCreated: (project: Project) => void | Promise<void>;
+  onClose: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [projectId, setProjectId] = useState("");
+  const [projectIdTouched, setProjectIdTouched] = useState(false);
+  const [description, setDescription] = useState("");
+  const [resolution, setResolution] = useState<"1280x720" | "1920x1080">("1280x720");
+  const [fps, setFps] = useState(30);
+  const [styleBar, setStyleBar] = useState<"" | "luoxiaohei" | "shinkai" | "ghibli" | "jiangnan-baiyi">("");
+  const [template, setTemplate] = useState<"blank" | "luoxiaohei-starter">("blank");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Auto-derive projectId from title unless the user edited it directly.
+  useEffect(() => {
+    if (projectIdTouched) return;
+    const slug = title
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9一-龥]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 40);
+    const stamp = Date.now().toString(36).slice(-4);
+    setProjectId(slug ? `project_${slug}_${stamp}` : "");
+  }, [title, projectIdTouched]);
+
+  // Choosing the luoxiaohei-starter template flips the styleBar automatically.
+  useEffect(() => {
+    if (template === "luoxiaohei-starter") setStyleBar("luoxiaohei");
+  }, [template]);
+
+  const idCollides = projectId && existingIds.includes(projectId);
+
+  async function submit() {
+    setErr(null);
+    if (!title.trim()) { setErr("项目标题不能为空"); return; }
+    if (!projectId.trim()) { setErr("项目 ID 不能为空"); return; }
+    if (idCollides) { setErr(`项目 ID「${projectId}」已存在，换一个`); return; }
+
+    setBusy(true);
+    try {
+      const project: Project = {
+        projectId: projectId.trim(),
+        title: title.trim(),
+        description: description.trim() || "（暂无描述）",
+        assetRefs: [],
+        chapters: [{
+          chapterId: `chapter_${Date.now().toString(36)}_001`,
+          title: template === "luoxiaohei-starter" ? "第一章" : "新章节",
+          sceneId: "",
+          characters: [],
+          transition: { type: "fadeIn", duration: 1 },
+          segments: [{
+            segmentId: `segment_${Date.now().toString(36)}_001`,
+            name: "新片段",
+            duration: template === "luoxiaohei-starter" ? 22 : 15,
+            timeline: [],
+          }],
+        }],
+        config: {
+          resolution,
+          fps,
+          ...(styleBar ? { styleBar } : {}),
+        },
+        preview: {
+          activeChapterId: "",
+          activeSegmentId: "",
+        },
+        export: { includeAssets: true, includeTimeline: true },
+        aiReserved: {
+          assetGenerationEndpoint: "",
+          timelineGenerationEndpoint: "",
+          acceptedSchemas: ["AssetManifest", "Segment"],
+        },
+      };
+      // Make preview point at the new (empty) chapter / segment we just stubbed.
+      project.preview.activeChapterId = project.chapters[0].chapterId;
+      project.preview.activeSegmentId = project.chapters[0].segments[0].segmentId;
+      await onCreated(project);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <aside
+        className="asset-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="新建项目"
+        onMouseDown={(event) => event.stopPropagation()}
+        style={{ maxWidth: 640, width: "92vw" }}
+      >
+        <header className="asset-preview-header">
+          <div>
+            <p className="eyebrow">Project</p>
+            <h2>新建项目</h2>
+            <span>创建后自动入库 (SQLite projects 表) 并切换到当前编辑</span>
+          </div>
+          <button className="icon-button" type="button" title="关闭" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+        <section className="data-panel" style={{ border: "none", boxShadow: "none", padding: "0 4px" }}>
+
+        <div className="form-grid">
+          <label>
+            <span>项目标题</span>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="例如：森林晨光"
+              maxLength={80}
+            />
+          </label>
+
+          <label>
+            <span>项目 ID <small style={{ color: "var(--muted, #888)" }}>（snake_case，DB 主键）</small></span>
+            <input
+              type="text"
+              value={projectId}
+              onChange={(e) => { setProjectId(e.target.value); setProjectIdTouched(true); }}
+              placeholder="自动从标题生成"
+              style={idCollides ? { borderColor: "var(--err, #c0392b)" } : {}}
+            />
+          </label>
+
+          <label>
+            <span>项目描述（选填）</span>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              placeholder="一两句话写清楚剧情/风格意图，AI 生成片段时会读这段。"
+            />
+          </label>
+
+          <div className="field-row">
+            <label>
+              <span>分辨率</span>
+              <select value={resolution} onChange={(e) => setResolution(e.target.value as typeof resolution)}>
+                <option value="1280x720">1280×720 (720p)</option>
+                <option value="1920x1080">1920×1080 (1080p)</option>
+              </select>
+            </label>
+            <label>
+              <span>FPS</span>
+              <input type="number" min={15} max={60} step={1} value={fps}
+                     onChange={(e) => setFps(Number(e.target.value) || 30)} />
+            </label>
+          </div>
+
+          <div className="field-row">
+            <label>
+              <span>起始模板</span>
+              <select value={template} onChange={(e) => setTemplate(e.target.value as typeof template)}>
+                <option value="blank">空白项目（自己加章节）</option>
+                <option value="luoxiaohei-starter">罗小黑模板（预设 22s 段位 + LX 风格档）</option>
+              </select>
+            </label>
+            <label>
+              <span>风格档位</span>
+              <select value={styleBar} onChange={(e) => setStyleBar(e.target.value as typeof styleBar)}>
+                <option value="">（无 — 走基线 2.5D 规则）</option>
+                <option value="luoxiaohei">罗小黑战记</option>
+                <option value="shinkai" disabled>新海诚（敬请期待）</option>
+                <option value="ghibli" disabled>吉卜力（敬请期待）</option>
+                <option value="jiangnan-baiyi" disabled>江南白衣（敬请期待）</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        {err ? (
+          <p style={{ color: "var(--err, #c0392b)", fontSize: 13, marginTop: 12 }}>{err}</p>
+        ) : null}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 18, justifyContent: "flex-end" }}>
+          <button type="button" onClick={onClose} disabled={busy}>取消</button>
+          <button
+            type="button"
+            className="primary"
+            disabled={busy || !title.trim() || !projectId.trim() || Boolean(idCollides)}
+            onClick={submit}
+          >
+            {busy ? "创建中…" : "创建并进入"}
+          </button>
+        </div>
+        </section>
+      </aside>
     </div>
   );
 }
@@ -1567,6 +1810,99 @@ function InlineTimelineEvents({
   );
 }
 
+interface TtsVoice { id: string; name: string; gender: string; style: string; language: string }
+
+/**
+ * Walk the segment timeline server-side and synthesize TTS for every
+ * dialogue / narration event that doesn't already carry an `audioUrl`.
+ * Audio bytes land in the `tts_audio` SQLite table; the timeline gets
+ * patched in place with the resulting URLs + viseme frames + duration.
+ */
+function BatchAudioGenerator({
+  projectId,
+  segmentId,
+  eventCount,
+  hasAudioCount,
+  onSegmentUpdated,
+}: {
+  projectId: string;
+  segmentId: string;
+  eventCount: number;
+  hasAudioCount: number;
+  onSegmentUpdated: (segment: Segment) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function runBatch() {
+    setBusy(true);
+    setErr(null);
+    setResult(null);
+    try {
+      const res = await fetch("/api/tts/segment-generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, segmentId, defaultVoice: "longxiaochun", defaultEmotion: "calm" }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail?.error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json() as {
+        project: Project;
+        generated: number;
+        cached: number;
+        skipped: number;
+        events: Array<{ status: string; error?: string }>;
+      };
+      const errored = data.events.filter((e) => e.status === "error");
+      // Pluck the updated segment out of the returned project and hand it up.
+      for (const ch of data.project.chapters) {
+        const found = ch.segments.find((s) => s.segmentId === segmentId);
+        if (found) { onSegmentUpdated(found); break; }
+      }
+      const parts: string[] = [];
+      if (data.generated) parts.push(`新生成 ${data.generated} 条`);
+      if (data.cached) parts.push(`命中缓存 ${data.cached} 条`);
+      if (data.skipped) parts.push(`跳过 ${data.skipped} 条`);
+      if (errored.length) parts.push(`失败 ${errored.length} 条`);
+      setResult(parts.join(" · ") || "无需生成");
+      if (errored.length) setErr(errored[0].error ?? "部分事件生成失败");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const remaining = Math.max(eventCount - hasAudioCount, 0);
+  return (
+    <div className="batch-audio-bar" style={{
+      display: "flex", alignItems: "center", gap: 10, padding: "8px 10px",
+      marginBottom: 10, background: "rgba(80, 130, 100, 0.08)",
+      border: "1px solid rgba(80, 130, 100, 0.25)", borderRadius: 8,
+    }}>
+      <strong style={{ fontSize: 13 }}>批量音频</strong>
+      <small style={{ color: "var(--muted, #666)", fontSize: 12 }}>
+        {eventCount} 条带文本 · {hasAudioCount} 已生成 · {remaining} 待生成
+      </small>
+      <div style={{ flex: 1 }} />
+      <button
+        type="button"
+        className="primary"
+        disabled={busy || remaining === 0}
+        onClick={runBatch}
+        title="为每个尚未配音的对白/旁白事件调用阿里 TTS"
+      >
+        {busy ? "生成中…" : remaining > 0 ? `生成 ${remaining} 条` : "全部已生成"}
+      </button>
+      {result ? <small style={{ color: "var(--ok, #2a7)", fontSize: 12 }}>{result}</small> : null}
+      {err ? <small style={{ color: "var(--err, #c0392b)", fontSize: 12 }}>{err}</small> : null}
+    </div>
+  );
+}
+
 function TimelineEventEditor({
   event,
   eventIndex,
@@ -1580,6 +1916,7 @@ function TimelineEventEditor({
     return <div className="event-editor-empty">选择一个时间轴事件查看和编辑参数。</div>;
   }
   const currentEvent = event;
+  const isDialogue = currentEvent.type === "dialogue" || currentEvent.type === "narration";
 
   function update(mutator: (draft: Record<string, unknown>) => void) {
     const draft = cloneEvent(currentEvent);
@@ -1626,11 +1963,137 @@ function TimelineEventEditor({
         {"camera" in currentEvent ? <CameraEventEditor event={currentEvent} onChange={update} /> : null}
       </div>
 
+      {isDialogue ? <TtsPanel event={currentEvent as Extract<TimelineEvent, { type: "dialogue" | "narration" }>} onPatch={(patch) => update((draft) => Object.assign(draft, patch))} /> : null}
+
       <details className="event-json-details">
         <summary>查看完整事件 JSON</summary>
         <pre>{JSON.stringify(currentEvent, null, 2)}</pre>
       </details>
     </section>
+  );
+}
+
+/**
+ * TTS panel — appears for dialogue / narration events. Lets the user pick
+ * voice + emotion, hit "生成", and have the resulting audioUrl / visemes
+ * patched onto the event in place.
+ *
+ * Voices + emotion presets are fetched once from /api/tts/voices and
+ * cached in module-level state via useState; we don't bother with a
+ * cache key because the list is hard-coded server-side and never
+ * changes during a session.
+ */
+function TtsPanel({
+  event,
+  onPatch,
+}: {
+  event: Extract<TimelineEvent, { type: "dialogue" | "narration" }>;
+  onPatch: (patch: Record<string, unknown>) => void;
+}) {
+  const [voices, setVoices] = useState<TtsVoice[]>([]);
+  const [emotions, setEmotions] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/tts/voices")
+      .then((r) => r.json())
+      .then((data: { voices: TtsVoice[]; emotions: string[] }) => {
+        if (cancelled) return;
+        setVoices(data.voices ?? []);
+        setEmotions(data.emotions ?? []);
+      })
+      .catch(() => {/* offline mode — leave defaults */});
+    return () => { cancelled = true; };
+  }, []);
+
+  const voice = event.voice ?? "longxiaochun";
+  const emotion = event.emotion ?? "neutral";
+  const text = event.text ?? "";
+
+  async function synthesize() {
+    if (!text.trim()) {
+      setErr("先填写台词文本");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch("/api/tts/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, voice, emotion }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}));
+        throw new Error(detail?.error ?? `HTTP ${res.status}`);
+      }
+      const data = await res.json() as { audioUrl: string; durationSec: number; visemes: unknown[]; voice: string };
+      const newDuration = Math.max(Number(data.durationSec.toFixed(1)), 0.5);
+      const patch: Record<string, unknown> = {
+        audioUrl: data.audioUrl,
+        voice,
+        emotion,
+        duration: newDuration,
+      };
+      if (event.type === "dialogue") patch.visemes = data.visemes;
+      onPatch(patch);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function preview() {
+    if (!event.audioUrl) return;
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    const a = new Audio(event.audioUrl);
+    a.play().catch(() => {/* autoplay blocked, ignore */});
+    audioRef.current = a;
+  }
+
+  return (
+    <div className="tts-panel" style={{ marginTop: 12, padding: 12, border: "1px solid var(--border, #ddd)", borderRadius: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <strong>TTS · 阿里语音</strong>
+        {event.audioUrl ? <small style={{ color: "var(--ok, green)" }}>已生成</small> : <small style={{ color: "var(--muted, #888)" }}>未生成</small>}
+      </div>
+      <div className="field-row">
+        <label>
+          <span>音色</span>
+          <select value={voice} onChange={(e) => onPatch({ voice: e.target.value })}>
+            {voices.length === 0 ? <option value={voice}>{voice}</option> : voices.map((v) => (
+              <option key={v.id} value={v.id}>{v.name} ({v.gender}, {v.style})</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>情绪</span>
+          <select value={emotion} onChange={(e) => onPatch({ emotion: e.target.value })}>
+            {(emotions.length === 0 ? ["neutral", "happy", "sad", "angry", "surprised", "calm"] : emotions).map((em) => (
+              <option key={em} value={em}>{em}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+        <button type="button" className="primary" disabled={busy || !text.trim()} onClick={synthesize}>
+          {busy ? "生成中…" : event.audioUrl ? "重新生成" : "生成音频"}
+        </button>
+        {event.audioUrl ? (
+          <button type="button" onClick={preview}>试听</button>
+        ) : null}
+        {event.audioUrl ? (
+          <small style={{ alignSelf: "center", color: "var(--muted, #888)" }}>
+            {event.type === "dialogue" && Array.isArray(event.visemes) ? `${event.visemes.length} viseme 帧` : "音频已就位"}
+          </small>
+        ) : null}
+      </div>
+      {err ? <div style={{ marginTop: 8, color: "var(--err, #c0392b)" }}>{err}</div> : null}
+    </div>
   );
 }
 

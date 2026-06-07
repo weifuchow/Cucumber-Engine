@@ -6,12 +6,13 @@
   "scripts": {
     "dev": "concurrently -k -n web,api -c cyan,magenta \"npm:dev:web\" \"npm:dev:api\"",
     "dev:web": "vite --host 0.0.0.0",
-    "dev:api": "tsx watch server/index.ts",
+    "dev:api": "tsx watch --env-file-if-exists=.env server/index.ts",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "db:init": "tsx server/db/init.ts",
     "db:seed": "tsx server/db/seed.ts",
     "lint:2.5d": "tsx scripts/lint-2_5d.ts",
+    "lint:luoxiaohei": "tsx scripts/lint-2_5d.ts --style luoxiaohei",
     "build:character": "tsx scripts/build-character-shape.ts",
     "check": "tsc --noEmit && tsc --noEmit -p tsconfig.server.json"
   },

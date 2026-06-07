@@ -6,7 +6,7 @@
 //
 // Usage:
 //
-//   # spec from stdin
+//   # spec from stdin, produce front view shape
 //   echo '{"palette":{...},"hairStyle":"fringe","hat":"straw"}' \
 //     | npx tsx scripts/build-character-shape.ts
 //
@@ -16,19 +16,33 @@
 //   # spec inline
 //   npx tsx scripts/build-character-shape.ts --spec '{"hairStyle":"spiky"}'
 //
-//   # full manifest (wraps the shape in the boilerplate AssetManifest)
-//   npx tsx scripts/build-character-shape.ts --emit manifest --spec '...'
+//   # pick an alternate view (back / sideLeft / sideRight / threeQuarterLeft / threeQuarterRight)
+//   npx tsx scripts/build-character-shape.ts --view sideLeft --spec '...'
+//
+//   # produce all four canonical views (front + back + sideLeft + sideRight)
+//   # as a single JSON object keyed by view name
+//   npx tsx scripts/build-character-shape.ts --emit bundle --spec '...'
+//
+//   # full manifest with the 4-view bundle wired into metadata.shapes
+//   npx tsx scripts/build-character-shape.ts --emit manifest --views all --spec '...'
 //
 // Output is a single JSON object printed to stdout. The shell calling this
-// script slurps it and embeds it in the manifest under metadata.shape.
+// script slurps it and embeds it in the manifest under metadata.shape /
+// metadata.shapes.
 
 import { readFileSync } from "node:fs";
 import {
   buildHumanCharacterShape,
+  buildHumanCharacterShapeForView,
+  buildHumanCharacterShapesBundle,
   HUMAN_CHARACTER_ACTIONS,
   HUMAN_CHARACTER_EXPRESSIONS,
   type HumanCharacterOptions,
+  type HumanCharacterView,
 } from "../src/data/characterShapes.ts";
+
+type EmitMode = "shape" | "manifest" | "bundle";
+type ViewsMode = "front" | "all";
 
 interface FullSpec extends HumanCharacterOptions {
   // Manifest-mode metadata (only used when --emit manifest)
@@ -43,30 +57,51 @@ interface FullSpec extends HumanCharacterOptions {
   references?: Array<{ sourceType: string; source: string; note: string }>;
 }
 
-function parseArgs(argv: string[]): { emit: "shape" | "manifest"; spec: FullSpec } {
-  let emit: "shape" | "manifest" = "shape";
+interface ParsedArgs {
+  emit: EmitMode;
+  view: HumanCharacterView;
+  views: ViewsMode;
+  spec: FullSpec;
+}
+
+const VALID_VIEWS: HumanCharacterView[] = [
+  "front", "back", "sideLeft", "sideRight", "threeQuarterLeft", "threeQuarterRight",
+];
+
+function parseArgs(argv: string[]): ParsedArgs {
+  let emit: EmitMode = "shape";
+  let view: HumanCharacterView = "front";
+  let views: ViewsMode = "front";
   let specText: string | null = null;
 
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
-    if (arg === "--emit") emit = argv[++i] === "manifest" ? "manifest" : "shape";
-    else if (arg === "--spec") specText = argv[++i];
-    else if (arg === "--spec-file") specText = readFileSync(argv[++i], "utf8");
+    if (arg === "--emit") {
+      const v = argv[++i];
+      emit = v === "manifest" ? "manifest" : v === "bundle" ? "bundle" : "shape";
+    } else if (arg === "--view") {
+      const v = argv[++i] as HumanCharacterView;
+      if (!VALID_VIEWS.includes(v)) {
+        throw new Error(`unknown --view '${v}'. valid: ${VALID_VIEWS.join(", ")}`);
+      }
+      view = v;
+    } else if (arg === "--views") {
+      const v = argv[++i];
+      views = v === "all" ? "all" : "front";
+    } else if (arg === "--spec") {
+      specText = argv[++i];
+    } else if (arg === "--spec-file") {
+      specText = readFileSync(argv[++i], "utf8");
+    }
   }
 
-  if (specText === null) {
-    // read from stdin
-    specText = readFileSync(0, "utf8");
-  }
-
+  if (specText === null) specText = readFileSync(0, "utf8");
   const spec = JSON.parse(specText || "{}") as FullSpec;
-  return { emit, spec };
+  return { emit, view, views, spec };
 }
 
-function main() {
-  const { emit, spec } = parseArgs(process.argv);
-
-  const shape = buildHumanCharacterShape({
+function specToOptions(spec: FullSpec): HumanCharacterOptions {
+  return {
     scale: spec.scale,
     hairStyle: spec.hairStyle,
     hat: spec.hat,
@@ -77,10 +112,23 @@ function main() {
     facialMarks: spec.facialMarks,
     eyeStyle: spec.eyeStyle,
     chestEmblem: spec.chestEmblem,
-  });
+  };
+}
+
+function main() {
+  const { emit, view, views, spec } = parseArgs(process.argv);
+  const options = specToOptions(spec);
 
   if (emit === "shape") {
+    const shape = view === "front"
+      ? buildHumanCharacterShape(options)
+      : buildHumanCharacterShapeForView(options, view);
     process.stdout.write(JSON.stringify(shape));
+    return;
+  }
+
+  if (emit === "bundle") {
+    process.stdout.write(JSON.stringify(buildHumanCharacterShapesBundle(options)));
     return;
   }
 
@@ -91,6 +139,13 @@ function main() {
     hair: "#2a1e16",
     pants: "#3b6090",
   };
+
+  const shapeFront = buildHumanCharacterShape(options);
+  const shapesBundle = views === "all" ? buildHumanCharacterShapesBundle(options) : undefined;
+  const populatedViews = shapesBundle
+    ? (Object.keys(shapesBundle) as HumanCharacterView[])
+    : ["front" as HumanCharacterView];
+
   const manifest = {
     assetId: spec.assetId ?? `character_${slugify(spec.name ?? "unnamed")}_001`,
     name: spec.name ?? "未命名角色",
@@ -108,7 +163,11 @@ function main() {
       displayName: spec.displayName ?? spec.name ?? "角色",
       actions: HUMAN_CHARACTER_ACTIONS,
       expressions: HUMAN_CHARACTER_EXPRESSIONS,
-      shape,
+      views: populatedViews,
+      // `shape` is kept for back-compat (renderers without view support
+      // pick this up as the canonical front view).
+      shape: shapeFront,
+      ...(shapesBundle ? { shapes: shapesBundle } : {}),
       references: spec.references ?? [],
       builtBy: "scripts/build-character-shape.ts",
     },

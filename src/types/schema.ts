@@ -2,6 +2,70 @@ export type AssetCategory = "visual" | "audio";
 
 export type AssetScope = "global" | "project";
 
+/**
+ * 2.5D character view angles. A character manifest may carry separate
+ * `metadata.shapes[<angle>]` shape entries; the renderer picks the one
+ * matching the current `CharacterRenderState.angle` (with fallback to
+ * `front`, then to `metadata.shape`).
+ *
+ * `front` is the legacy single-shape default. `sideLeft` / `sideRight`
+ * are profile views facing screen-left / screen-right respectively.
+ * `back` is the away-from-camera view. `threeQuarterLeft` /
+ * `threeQuarterRight` are optional 3/4 turn variants between front and
+ * side; if not declared, the engine falls back to the closest side view.
+ */
+export type AngleKey =
+  | "front"
+  | "back"
+  | "sideLeft"
+  | "sideRight"
+  | "threeQuarterLeft"
+  | "threeQuarterRight";
+
+export const ANGLE_KEYS: readonly AngleKey[] = [
+  "front",
+  "back",
+  "sideLeft",
+  "sideRight",
+  "threeQuarterLeft",
+  "threeQuarterRight",
+];
+
+/**
+ * 7-viseme lip-sync set. Mirrors `server/services/tts/types.ts` — keep
+ * the two in sync. The renderer drives `state.viseme` from `lipSync`
+ * frames on `dialogue` / `narration` / `lipSync` timeline events.
+ */
+export type Viseme =
+  | "rest"   // closed neutral
+  | "open"   // wide "a"
+  | "narrow" // tight "i" smile
+  | "round"  // pursed "u/o"
+  | "mid"    // half-open "e"
+  | "wide"   // diphthong open + lateral
+  | "ee";    // bright "ie/ye" smile
+
+export const VISEMES: readonly Viseme[] = ["rest", "open", "narrow", "round", "mid", "wide", "ee"];
+
+/**
+ * Standard 12-expression set. Manifests are free to declare additional
+ * names in `metadata.expressions`; this list is the **baseline** that
+ * AI-generated characters should always cover so the segment generator
+ * can request any of them by name without checking manifests first.
+ */
+export const STANDARD_EXPRESSIONS = [
+  "neutral", "happy", "sad", "angry", "surprised",
+  "soft", "scared", "smug", "embarrassed", "thinking",
+  "crying", "laughing",
+] as const;
+export type StandardExpression = (typeof STANDARD_EXPRESSIONS)[number];
+
+export interface VisemeFrame {
+  time: number;
+  viseme: Viseme;
+  token?: string;
+}
+
 export type AssetType =
   | "character"
   | "scene"
@@ -73,6 +137,12 @@ export interface Project {
   config: {
     resolution: "1280x720" | "1920x1080";
     fps: number;
+    /**
+     * Opt-in stylistic acceptance bar. When set, the AI generators and
+     * lint scripts apply the extra rules documented in
+     * docs/acceptance-<bar>.md. Defaults to undefined (baseline 2.5D only).
+     */
+    styleBar?: "luoxiaohei" | "shinkai" | "ghibli" | "jiangnan-baiyi";
   };
   preview: {
     activeChapterId: string;
@@ -102,11 +172,28 @@ export interface Chapter {
   segments: Segment[];
 }
 
+export interface BeatGrid {
+  bpm: number;
+  offsetSec: number;
+  durationSec: number;
+  beats: number[];
+  downbeatEvery: number;
+  downbeats: number[];
+}
+
 export interface Segment {
   segmentId: string;
   name: string;
   duration: number;
   timeline: TimelineEvent[];
+  /**
+   * Optional beat grid cached at design time. Populated by calling
+   * `/api/audio/beats` and shown in the editor as vertical guide lines;
+   * the AI segment generator consumes it to snap cameraChange /
+   * effectPlay / characterAction events to the nearest beat. Not used by
+   * the runtime renderer.
+   */
+  beatGrid?: BeatGrid;
 }
 
 export type TimelineEvent =
@@ -114,7 +201,7 @@ export type TimelineEvent =
       time: number;
       type: "characterAppear";
       target: string;
-      position: { x: number; y: number; z?: number };
+      position: { x: number; y: number; z?: number; angle?: AngleKey };
       expression?: string;
       scale?: number;
     }
@@ -123,7 +210,7 @@ export type TimelineEvent =
       time: number;
       type: "characterMove";
       target: string;
-      to: { x: number; y: number; z?: number };
+      to: { x: number; y: number; z?: number; angle?: AngleKey };
       duration: number;
     }
   | {
@@ -132,7 +219,40 @@ export type TimelineEvent =
       target: string;
       action: { name: string; params: Record<string, unknown> };
     }
-  | { time: number; type: "expressionChange"; target: string; expression: string }
+  | {
+      time: number;
+      type: "expressionChange";
+      target: string;
+      expression: string;
+      /**
+       * Strength of the expression, 0–1. Default 1. The engine maps this
+       * onto eyebrow lift / mouth corner pull / cheek warmth amplitudes.
+       * Useful for "barely smiling" or "barely angry" reads.
+       */
+      intensity?: number;
+    }
+  | {
+      time: number;
+      type: "characterTurn";
+      target: string;
+      angle: AngleKey;
+      duration?: number;
+    }
+  | {
+      time: number;
+      type: "headTurn";
+      target: string;
+      /**
+       * Head yaw in radians. Positive = head turned to character's right
+       * (screen-right when character faces front). Range roughly ±0.6.
+       * Used for "look at the other speaker" beats without swapping the
+       * full body view angle.
+       */
+      yaw: number;
+      /** Head pitch in radians. Positive = looking up. Range roughly ±0.4. */
+      pitch?: number;
+      duration?: number;
+    }
   | { time: number; type: "sceneChange"; sceneId: string }
   | {
       time: number;
@@ -163,9 +283,46 @@ export type TimelineEvent =
     }
   | { time: number; type: "subtitle"; text: string; duration: number }
   | { time: number; type: "bgmPlay"; assetId: string; volume: number }
-  | { time: number; type: "dialogue"; target: string; assetId?: string; text?: string; duration: number }
-  | { time: number; type: "narration"; assetId?: string; text?: string; duration: number }
-  | { time: number; type: "soundEffect"; assetId: string; volume: number };
+  | {
+      time: number;
+      type: "dialogue";
+      target: string;
+      assetId?: string;
+      text?: string;
+      duration: number;
+      /** TTS-generated audio URL (served from /api/tts/audio/...). */
+      audioUrl?: string;
+      /** TTS provider voice id ("longxiaochun" / etc.). */
+      voice?: string;
+      /** Emotion cue passed to the TTS provider. */
+      emotion?: string;
+      /** Per-frame viseme keyframes. The renderer maps these onto the speaker's mouth shape via state.viseme. */
+      visemes?: VisemeFrame[];
+    }
+  | {
+      time: number;
+      type: "narration";
+      assetId?: string;
+      text?: string;
+      duration: number;
+      audioUrl?: string;
+      voice?: string;
+      emotion?: string;
+    }
+  | { time: number; type: "soundEffect"; assetId: string; volume: number }
+  | {
+      time: number;
+      /**
+       * Standalone lip-sync drive. Used when dialogue audio is registered
+       * as a separate `dialogue` event but the lip-sync timing was
+       * computed/edited independently (e.g. user re-recorded the line).
+       * Overrides whatever visemes the matching dialogue event carries.
+       */
+      type: "lipSync";
+      target: string;
+      duration: number;
+      visemes: VisemeFrame[];
+    };
 
 export interface AssetLibrary {
   globalAssets: AssetManifest[];

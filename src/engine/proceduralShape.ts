@@ -148,6 +148,43 @@ export type Primitive =
       kind: "clip";
       shape: ClipShape;
       children: ConditionalPrimitive[];
+    }
+  | {
+      /**
+       * Procedural particle emitter. Emits `count` deterministic particles
+       * whose position / size / fill are derived from a per-particle
+       * `seed` (0…count-1) and the existing state vocabulary (`time`,
+       * `progress`, etc.).
+       *
+       * Use cases: 爆炸碎片, 雪花, 火星, 水滴, 樱花 — anything where
+       * hand-writing 60 polygons is silly but the renderer can iterate
+       * cheaply.
+       *
+       * The renderer evaluates each numeric field once per particle with
+       * `seed` and `i` (alias for seed) bound in the shape-state scope on
+       * top of the inherited state, so e.g.
+       *   `cx: "cos(seed * 0.6 + time) * 80"`
+       * gives a horizontally-spread spray.
+       *
+       * Particles are simple — they support fill/stroke/lineWidth/shadow
+       * but not children. For complex per-particle assemblies, wrap a
+       * single `transform` per particle by hand instead.
+       */
+      kind: "particles";
+      count: number;
+      cx: NumExpr;
+      cy: NumExpr;
+      r: NumExpr;
+      fill?: ColorSpec;
+      stroke?: ColorSpec;
+      lineWidth?: NumExpr;
+      shadow?: ShadowSpec;
+      /**
+       * Shape of each particle. Defaults to "circle" — `r` is the radius.
+       * "rect" interprets `r` as half-width / half-height (square).
+       * "spark" draws a 4-spike asterisk at radius `r`.
+       */
+      particleShape?: "circle" | "rect" | "spark";
     };
 
 export type ClipShape =
@@ -404,6 +441,54 @@ function drawPrimitive(
       ctx.restore();
       return;
     }
+    case "particles": {
+      const count = Math.max(0, Math.min(prim.count | 0, 500));
+      const shape = prim.particleShape ?? "circle";
+      for (let i = 0; i < count; i++) {
+        const particleState: ShapeState = { ...state, seed: i, i };
+        const cx = evalNum(prim.cx, particleState);
+        const cy = evalNum(prim.cy, particleState);
+        const r  = evalNum(prim.r,  particleState);
+        if (!isFinite(cx) || !isFinite(cy) || !isFinite(r) || r <= 0) continue;
+        if (prim.shadow) {
+          ctx.save();
+          ctx.shadowBlur = evalNum(prim.shadow.blur, particleState);
+          ctx.shadowOffsetX = evalNum(prim.shadow.offsetX ?? 0, particleState);
+          ctx.shadowOffsetY = evalNum(prim.shadow.offsetY ?? 0, particleState);
+          ctx.shadowColor = interpolate(prim.shadow.color, particleState);
+        }
+        ctx.beginPath();
+        if (shape === "circle") {
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        } else if (shape === "rect") {
+          ctx.rect(cx - r, cy - r, r * 2, r * 2);
+        } else { // spark — 4-spike
+          ctx.moveTo(cx - r, cy);
+          ctx.lineTo(cx + r, cy);
+          ctx.moveTo(cx, cy - r);
+          ctx.lineTo(cx, cy + r);
+        }
+        if (shape === "spark") {
+          // Spark renders as strokes only — fill doesn't apply.
+          ctx.strokeStyle = resolveColor(ctx, prim.stroke ?? prim.fill ?? "#fff", palette, particleState);
+          ctx.lineWidth = evalNum(prim.lineWidth ?? 1.5, particleState);
+          ctx.lineCap = "round";
+          ctx.stroke();
+        } else {
+          if (prim.fill) {
+            ctx.fillStyle = resolveColor(ctx, prim.fill, palette, particleState);
+            ctx.fill();
+          }
+          if (prim.stroke) {
+            ctx.strokeStyle = resolveColor(ctx, prim.stroke, palette, particleState);
+            ctx.lineWidth = evalNum(prim.lineWidth ?? 1, particleState);
+            ctx.stroke();
+          }
+        }
+        if (prim.shadow) ctx.restore();
+      }
+      return;
+    }
     case "clip": {
       ctx.save();
       ctx.beginPath();
@@ -491,7 +576,13 @@ function resolveColor(
 ): string | CanvasGradient {
   if (typeof spec === "string") return interpolate(spec, state);
   if ("palette" in spec) {
-    const base = palette[spec.palette] ?? "#000000";
+    // State takes precedence — this is how Spine slot color animation
+    // overrides the manifest's rest-pose palette. The painter merges
+    // `slot_<name>_color` keys into state from the spine animation
+    // evaluator; if one exists for this palette name, it wins. Otherwise
+    // fall back to the manifest palette dict.
+    const stateOverride = state[spec.palette];
+    const base = (typeof stateOverride === "string" && stateOverride) ? stateOverride : (palette[spec.palette] ?? "#000000");
     return spec.darken ? darken(base, spec.darken) : base;
   }
 

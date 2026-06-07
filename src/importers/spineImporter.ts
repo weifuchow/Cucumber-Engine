@@ -22,6 +22,8 @@
 // Spec reference (Spine 4.x JSON): http://esotericsoftware.com/spine-json-format
 
 import type { ConditionalPrimitive, Primitive, ProceduralShape } from "../engine/proceduralShape";
+import type { SpineAnimation, SpineAnimationMap, SpineBoneKeyframes, SpineColorKey, SpineRotateKey, SpineSlotKeyframes, SpineVecKey } from "../engine/spineKeyframes";
+import { sanitize as sanitizeBoneName } from "../engine/spineKeyframes";
 import type { AssetManifest, AssetScope } from "../types/schema";
 import { createDefaultLicense, safeId } from "./importers";
 
@@ -75,7 +77,19 @@ interface SpineJson {
   bones?: SpineBone[];
   slots?: SpineSlot[];
   skins?: SpineSkin[] | Record<string, Record<string, Record<string, SpineAttachment>>>;
-  animations?: Record<string, unknown>;
+  animations?: Record<string, SpineAnimationData>;
+}
+
+interface SpineAnimationData {
+  bones?: Record<string, {
+    rotate?: Array<{ time?: number; angle?: number; curve?: unknown }>;
+    translate?: Array<{ time?: number; x?: number; y?: number; curve?: unknown }>;
+    scale?: Array<{ time?: number; x?: number; y?: number; curve?: unknown }>;
+  }>;
+  slots?: Record<string, {
+    color?: Array<{ time?: number; color?: string; curve?: unknown }>;
+  }>;
+  // Still ignored: deform timelines, IK constraints, physics constraints.
 }
 
 interface BoneTransform {
@@ -141,7 +155,6 @@ export function spineJsonToManifest(
 
   // Spine's Y is up-positive; ours is up-negative. Flip once when projecting.
   const flipY = (y: number) => -y;
-  let paletteIdx = 0;
 
   for (const slot of json.slots ?? []) {
     const attachmentMap = defaultSkin[slot.name];
@@ -152,7 +165,10 @@ export function spineJsonToManifest(
 
     const bone = worldTransforms.get(slot.bone) ?? { worldX: 0, worldY: 0, worldRotation: 0, scaleX: 1, scaleY: 1 };
     const tint = parseSpineColor(slot.color ?? attachment.color);
-    const paletteKey = `slot_${paletteIdx++}`;
+    // Naming matches `evaluateSpineBones`'s slot color output key
+    // (`slot_<sanitized_name>_color`) so a running animation can override
+    // the rest-pose tint with no extra plumbing.
+    const paletteKey = `slot_${sanitizeBoneName(slot.name)}_color`;
     palette[paletteKey] = tint;
 
     if (isRegion(attachment)) {
@@ -160,19 +176,31 @@ export function spineJsonToManifest(
       const h = attachment.height * (attachment.scaleY ?? 1);
       const ax = (attachment.x ?? 0);
       const ay = (attachment.y ?? 0);
-      const rotation = ((bone.worldRotation + (attachment.rotation ?? 0)) * Math.PI) / 180;
+      const restRotationDeg = bone.worldRotation + (attachment.rotation ?? 0);
+      const safe = sanitizeBoneName(slot.bone);
+      // Outer transform: bone rest pose + animation-driven translate (Y
+      // is flipped at import — we pre-flip the rest position and reverse
+      // the per-frame `bone_<name>_y` by negating it in the expression).
+      // Inner transform: attachment offset.
       primitives.push({
         kind: "transform",
-        translate: { x: bone.worldX + ax, y: flipY(bone.worldY + ay) },
-        rotate: rotation,
-        children: [
-          { kind: "roundedRect", x: -w / 2, y: -h / 2, w, h, r: Math.min(w, h) * 0.12, fill: { palette: paletteKey }, stroke: "rgba(0,0,0,0.55)", lineWidth: 1.4 },
-          { kind: "roundedRect", x: -w / 2, y: -h / 2, w, h, r: Math.min(w, h) * 0.12,
-            fill: { gradient: "linear", x0: -w / 2, y0: -h / 2, x1: w / 2, y1: h / 2, stops: [
-              { at: 0, color: "rgba(255,255,255,0.18)" },
-              { at: 1, color: "rgba(0,0,0,0.3)" },
-            ] } },
-        ],
+        translate: {
+          x: `${bone.worldX} + bone_${safe}_x`,
+          y: `${flipY(bone.worldY)} - bone_${safe}_y`,
+        },
+        rotate: `(${restRotationDeg} + bone_${safe}_rotate) * (PI / 180)`,
+        children: [{
+          kind: "transform",
+          translate: { x: ax, y: flipY(ay) - flipY(0) },
+          children: [
+            { kind: "roundedRect", x: -w / 2, y: -h / 2, w, h, r: Math.min(w, h) * 0.12, fill: { palette: paletteKey }, stroke: "rgba(0,0,0,0.55)", lineWidth: 1.4 },
+            { kind: "roundedRect", x: -w / 2, y: -h / 2, w, h, r: Math.min(w, h) * 0.12,
+              fill: { gradient: "linear", x0: -w / 2, y0: -h / 2, x1: w / 2, y1: h / 2, stops: [
+                { at: 0, color: "rgba(255,255,255,0.18)" },
+                { at: 1, color: "rgba(0,0,0,0.3)" },
+              ] } },
+          ],
+        }],
       });
     } else if (isMesh(attachment) && Array.isArray(attachment.vertices) && attachment.vertices.length >= 6) {
       // Build a flat polygon from the vertex pairs (drop bone weights — we
@@ -210,8 +238,75 @@ export function spineJsonToManifest(
   });
 
   // 4. Animation names → actions list. Always include `idle` first.
-  const animationNames = Object.keys(json.animations ?? {});
+  //    Spine animation names map directly onto our `action` state. The
+  //    runtime evaluator (`evaluateSpineBones`) reads the structured
+  //    keyframes below to drive each transform's translate / rotate per
+  //    frame.
+  const animations = json.animations ?? {};
+  const animationNames = Object.keys(animations);
   const actions = uniq(["idle", ...animationNames.map(slugify)]);
+
+  const spineAnimations: SpineAnimationMap = {};
+  for (const animName of animationNames) {
+    const safeName = slugify(animName);
+    const anim = animations[animName];
+    const bones = anim?.bones ?? {};
+    const boneEntries: Record<string, SpineBoneKeyframes> = {};
+    for (const [boneName, kf] of Object.entries(bones)) {
+      const safeBone = sanitizeBoneName(boneName);
+      const entry: SpineBoneKeyframes = {};
+      if (Array.isArray(kf.rotate) && kf.rotate.length) {
+        entry.rotate = kf.rotate
+          .filter((k) => typeof k?.time === "number")
+          .map<SpineRotateKey>((k) => ({
+            time: k.time ?? 0,
+            angle: k.angle ?? 0,
+            curve: normalizeCurve(k.curve),
+          }));
+      }
+      if (Array.isArray(kf.translate) && kf.translate.length) {
+        entry.translate = kf.translate
+          .filter((k) => typeof k?.time === "number")
+          .map<SpineVecKey>((k) => ({
+            time: k.time ?? 0,
+            x: k.x ?? 0,
+            y: k.y ?? 0,
+            curve: normalizeCurve(k.curve),
+          }));
+      }
+      if (Array.isArray(kf.scale) && kf.scale.length) {
+        entry.scale = kf.scale
+          .filter((k) => typeof k?.time === "number")
+          .map<SpineVecKey>((k) => ({
+            time: k.time ?? 0,
+            x: k.x ?? 1,
+            y: k.y ?? 1,
+            curve: normalizeCurve(k.curve),
+          }));
+      }
+      if (entry.rotate || entry.translate || entry.scale) boneEntries[safeBone] = entry;
+    }
+
+    const slotEntries: Record<string, SpineSlotKeyframes> = {};
+    for (const [slotName, slotKf] of Object.entries(anim?.slots ?? {})) {
+      const safeSlot = sanitizeBoneName(slotName);
+      const entry: SpineSlotKeyframes = {};
+      if (Array.isArray(slotKf.color) && slotKf.color.length) {
+        entry.color = slotKf.color
+          .filter((k) => typeof k?.time === "number" && typeof k.color === "string")
+          .map<SpineColorKey>((k) => ({
+            time: k.time ?? 0,
+            color: String(k.color ?? "ffffffff"),
+            curve: normalizeCurve(k.curve),
+          }));
+      }
+      if (entry.color) slotEntries[safeSlot] = entry;
+    }
+
+    const animEntry: SpineAnimation = { bones: boneEntries };
+    if (Object.keys(slotEntries).length) animEntry.slots = slotEntries;
+    spineAnimations[safeName] = animEntry;
+  }
 
   // 5. Wrap each animation-named action in a soft "stand still in that pose"
   //    branch on the existing primitives. Without per-frame keyframes we
@@ -241,7 +336,8 @@ export function spineJsonToManifest(
       actions,
       expressions: ["neutral"],
       shape,
-      references: [{ sourceType: "open-format", source: originalFile, note: "Spine JSON skeleton import — rest-pose geometry only; per-frame keyframes dropped." }],
+      spineAnimations,
+      references: [{ sourceType: "open-format", source: originalFile, note: `Spine JSON skeleton import — ${animationNames.length} animation(s) with keyframe data: ${animationNames.join(", ") || "none"}` }],
     },
     license: createDefaultLicense(),
   };
@@ -285,6 +381,19 @@ function parseSpineColor(raw?: string): string {
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+/**
+ * Normalize Spine's loose curve declaration into our SpineCurve union.
+ * Strings stay as-is when known; 4-tuple arrays pass through unchanged;
+ * everything else collapses to "linear".
+ */
+function normalizeCurve(raw: unknown): import("../engine/spineKeyframes").SpineCurve {
+  if (raw === "stepped") return "stepped";
+  if (Array.isArray(raw) && raw.length >= 4 && raw.slice(0, 4).every((v) => typeof v === "number")) {
+    return raw.slice(0, 4) as number[];
+  }
+  return "linear";
 }
 
 function uniq<T>(arr: T[]): T[] {

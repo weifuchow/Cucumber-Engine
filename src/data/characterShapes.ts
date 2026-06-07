@@ -24,6 +24,11 @@
 // changes required.
 
 import type { ConditionalPrimitive, ProceduralShape } from "../engine/proceduralShape";
+import {
+  buildBackViewShape,
+  buildSideViewShape,
+  buildThreeQuarterShape,
+} from "./characterShapesViews";
 
 export type HairStyle = "short" | "fringe" | "spiky" | "flowing" | "bald";
 export type HatStyle = "none" | "straw" | "cap" | "beret" | "headband";
@@ -56,7 +61,23 @@ export interface HumanCharacterOptions {
 const SUPPORTED_ACTIONS = ["idle", "walking", "attack", "defend", "victory"] as const;
 export type CharacterAction = (typeof SUPPORTED_ACTIONS)[number];
 export const HUMAN_CHARACTER_ACTIONS: ReadonlyArray<CharacterAction> = SUPPORTED_ACTIONS;
-export const HUMAN_CHARACTER_EXPRESSIONS = ["neutral", "angry", "sad", "soft", "surprised"] as const;
+export const HUMAN_CHARACTER_EXPRESSIONS = [
+  "neutral", "happy", "sad", "angry", "surprised",
+  "soft", "scared", "smug", "embarrassed", "thinking",
+  "crying", "laughing",
+] as const;
+export const HUMAN_CHARACTER_VISEMES = ["rest", "open", "narrow", "round", "mid", "wide", "ee"] as const;
+
+/** Views the builder family knows how to produce. */
+export const HUMAN_CHARACTER_VIEWS = [
+  "front",
+  "back",
+  "sideLeft",
+  "sideRight",
+  "threeQuarterLeft",
+  "threeQuarterRight",
+] as const;
+export type HumanCharacterView = (typeof HUMAN_CHARACTER_VIEWS)[number];
 
 const OUTLINE = "rgba(20,16,12,0.7)";
 const OUTLINE_SOFT = "rgba(20,16,12,0.45)";
@@ -549,26 +570,34 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
   }
 
   // ============================================================
+  // ============================================================
+  // FACE BLOCK — eyebrows, eyes, nose, mouth, jaw
+  // Buffered into `facePrim` so the whole face is wrapped in a single
+  // transform driven by `headYaw` / `headPitch`. Eyes / mouth shift
+  // with the head pose without restructuring every primitive.
+  // ============================================================
+  const facePrim: ConditionalPrimitive[] = [];
+
   // EYEBROWS — thin arched polygons (expression-controlled)
   // ============================================================
   const browY = -320;
   for (const sign of [-1, 1]) {
     // Neutral — gentle arch
-    p.push({ when: "expression not in [angry, sad]", kind: "polygon", points: [
+    facePrim.push({ when: "expression not in [angry, sad]", kind: "polygon", points: [
       { x: sign * 38, y: browY },
       { x: sign * 12, y: browY - 3 },
       { x: sign * 12, y: browY + 1 },
       { x: sign * 38, y: browY + 4 },
     ], fill: "#1a120a" });
     // Angry — tilted inward + thicker
-    p.push({ when: "expression == angry", kind: "polygon", points: [
+    facePrim.push({ when: "expression == angry", kind: "polygon", points: [
       { x: sign * 38, y: browY - 4 },
       { x: sign * 12, y: browY + 6 },
       { x: sign * 12, y: browY + 9 },
       { x: sign * 38, y: browY },
     ], fill: "#1a120a" });
     // Sad — tilted outward
-    p.push({ when: "expression == sad", kind: "polygon", points: [
+    facePrim.push({ when: "expression == sad", kind: "polygon", points: [
       { x: sign * 38, y: browY + 4 },
       { x: sign * 12, y: browY - 4 },
       { x: sign * 12, y: browY },
@@ -585,7 +614,7 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
 
     if (eyeStyle === "almond") {
       // outer almond polygon (sclera)
-      p.push({ kind: "polygon", points: [
+      facePrim.push({ kind: "polygon", points: [
         { x: ex - 12, y: ey + 1 },
         { x: ex - 8, y: ey - 6 },
         { x: ex + 8, y: ey - 7 },
@@ -594,7 +623,7 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
         { x: ex - 8, y: ey + 5 },
       ], fill: "#fbf6ee", stroke: OUTLINE, lineWidth: 1.4 });
       // upper eyelid shadow strip
-      p.push({ kind: "polygon", points: [
+      facePrim.push({ kind: "polygon", points: [
         { x: ex - 12, y: ey + 1 },
         { x: ex - 8, y: ey - 6 },
         { x: ex + 8, y: ey - 7 },
@@ -604,7 +633,7 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
       ], fill: "rgba(40,20,12,0.32)" });
     } else if (eyeStyle === "narrow") {
       // narrow squint — slit polygon
-      p.push({ kind: "polygon", points: [
+      facePrim.push({ kind: "polygon", points: [
         { x: ex - 12, y: ey + 2 },
         { x: ex - 5, y: ey - 3 },
         { x: ex + 5, y: ey - 3 },
@@ -614,67 +643,159 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
       ], fill: "#fbf6ee", stroke: OUTLINE, lineWidth: 1.4 });
     } else {
       // round chibi
-      p.push({ kind: "ellipse", cx: ex, cy: ey, rx: 11, ry: 9, fill: "#fbf6ee", stroke: OUTLINE, lineWidth: 1.4 });
+      facePrim.push({ kind: "ellipse", cx: ex, cy: ey, rx: 11, ry: 9, fill: "#fbf6ee", stroke: OUTLINE, lineWidth: 1.4 });
     }
 
     // Iris (larger for anime feel)
-    p.push({ kind: "circle", cx: ex, cy: ey + 1, r: 6,
+    facePrim.push({ kind: "circle", cx: ex, cy: ey + 1, r: 6,
       fill: { gradient: "radial", x0: ex, y0: ey, r0: 1, x1: ex, y1: ey + 2, r1: 6,
         stops: [{ at: 0, color: "#3a6f8a" }, { at: 1, color: "#1f3a4a" }] } });
     // Pupil
-    p.push({ when: "expression != surprised", kind: "circle", cx: ex, cy: ey + 1, r: 3, fill: "#08111a" });
+    facePrim.push({ when: "expression != surprised", kind: "circle", cx: ex, cy: ey + 1, r: 3, fill: "#08111a" });
     // Surprised pupil — small
-    p.push({ when: "expression == surprised", kind: "circle", cx: ex, cy: ey + 1, r: 1.5, fill: "#08111a" });
+    facePrim.push({ when: "expression == surprised", kind: "circle", cx: ex, cy: ey + 1, r: 1.5, fill: "#08111a" });
     // Double highlight
-    p.push({ kind: "circle", cx: ex - 2, cy: ey - 1, r: 2, fill: "rgba(255,255,255,0.95)" });
-    p.push({ kind: "circle", cx: ex + 2.5, cy: ey + 2.5, r: 1, fill: "rgba(255,255,255,0.7)" });
+    facePrim.push({ kind: "circle", cx: ex - 2, cy: ey - 1, r: 2, fill: "rgba(255,255,255,0.95)" });
+    facePrim.push({ kind: "circle", cx: ex + 2.5, cy: ey + 2.5, r: 1, fill: "rgba(255,255,255,0.7)" });
     // Lower eyelid hint
-    p.push({ kind: "line", x1: ex - 8, y1: ey + 5, x2: ex + 8, y2: ey + 5,
+    facePrim.push({ kind: "line", x1: ex - 8, y1: ey + 5, x2: ex + 8, y2: ey + 5,
       stroke: "rgba(40,20,12,0.4)", lineWidth: 1 });
   }
 
   // ============================================================
   // NOSE — minimal: tiny shading line on one side + nostril dot
   // ============================================================
-  p.push({ kind: "line", x1: -3, y1: -286, x2: -5, y2: -272, stroke: "rgba(60,30,20,0.4)", lineWidth: 1.2, lineCap: "round" });
-  p.push({ kind: "circle", cx: -2, cy: -270, r: 1, fill: "rgba(60,30,20,0.5)" });
-  p.push({ kind: "circle", cx: 3, cy: -270, r: 1, fill: "rgba(60,30,20,0.5)" });
+  facePrim.push({ kind: "line", x1: -3, y1: -286, x2: -5, y2: -272, stroke: "rgba(60,30,20,0.4)", lineWidth: 1.2, lineCap: "round" });
+  facePrim.push({ kind: "circle", cx: -2, cy: -270, r: 1, fill: "rgba(60,30,20,0.5)" });
+  facePrim.push({ kind: "circle", cx: 3, cy: -270, r: 1, fill: "rgba(60,30,20,0.5)" });
   // nose tip soft highlight
-  p.push({ kind: "ellipse", cx: 0, cy: -273, rx: 3, ry: 1.5, fill: "rgba(255,250,238,0.45)" });
+  facePrim.push({ kind: "ellipse", cx: 0, cy: -273, rx: 3, ry: 1.5, fill: "rgba(255,250,238,0.45)" });
 
   // ============================================================
-  // MOUTH — upper lip line + lower lip hue + corner shadows
+  // MOUTH — viseme-aware (when talking) OR expression-aware (when silent).
   // ============================================================
+  //
+  // The `mouth` shape-state key is set by the character painter:
+  //   - active dialogue  → mouth = viseme  (open/narrow/round/mid/wide/ee)
+  //   - silent           → mouth = expression (neutral/sad/happy/...)
+  //
+  // We list expressions FIRST so the resting/idle reads stay; the viseme
+  // branches override them whenever a dialogue/lipSync event drives the
+  // viseme away from "rest".
+
+  // --- Silent expressions (mouth == <expression>) ---
   // Neutral — slight smile arc
-  p.push({ when: "expression not in [sad, soft, surprised]", kind: "polygon", points: [
+  facePrim.push({ when: "mouth == neutral", kind: "polygon", points: [
     { x: -14, y: -258 }, { x: -8, y: -256 }, { x: 0, y: -255 },
     { x: 8, y: -256 }, { x: 14, y: -258 },
     { x: 14, y: -257 }, { x: 0, y: -253 }, { x: -14, y: -257 },
   ], fill: "#2b1810" });
-  // lower lip soft warmth (neutral, soft)
-  p.push({ when: "expression in [neutral, soft]", kind: "ellipse", cx: 0, cy: -250, rx: 11, ry: 2.5, fill: "rgba(200,100,80,0.32)" });
+  facePrim.push({ when: "mouth == neutral", kind: "ellipse", cx: 0, cy: -250, rx: 11, ry: 2.5, fill: "rgba(200,100,80,0.32)" });
 
-  // Smile (soft)
-  p.push({ when: "expression == soft", kind: "polygon", points: [
-    { x: -16, y: -256 }, { x: -8, y: -250 }, { x: 0, y: -248 },
-    { x: 8, y: -250 }, { x: 16, y: -256 },
-    { x: 14, y: -254 }, { x: 0, y: -244 }, { x: -14, y: -254 },
+  // Soft smile (intensity-amplified)
+  facePrim.push({ when: "mouth == soft", kind: "polygon", points: [
+    { x: -16, y: "-256 + 2 * intensity" }, { x: -8, y: "-250 + 2 * intensity" }, { x: 0, y: "-248 + 2 * intensity" },
+    { x: 8, y: "-250 + 2 * intensity" }, { x: 16, y: "-256 + 2 * intensity" },
+    { x: 14, y: "-254 + 2 * intensity" }, { x: 0, y: "-244 + 4 * intensity" }, { x: -14, y: "-254 + 2 * intensity" },
   ], fill: "#2b1810" });
 
-  // Sad — frown
-  p.push({ when: "expression == sad", kind: "arc", cx: 0, cy: -246, r: 18, startAngle: Math.PI * 1.15, endAngle: Math.PI * 1.85, stroke: "#2b1810", lineWidth: 2.5 });
+  // Happy (open smile, more amplitude than soft)
+  facePrim.push({ when: "mouth == happy", kind: "polygon", points: [
+    { x: -20, y: "-256 + 3 * intensity" }, { x: -10, y: "-246 + 4 * intensity" }, { x: 0, y: "-244 + 4 * intensity" },
+    { x: 10, y: "-246 + 4 * intensity" }, { x: 20, y: "-256 + 3 * intensity" },
+    { x: 16, y: -252 }, { x: 0, y: "-238 + 6 * intensity" }, { x: -16, y: -252 },
+  ], fill: "#2b1810" });
+  facePrim.push({ when: "mouth == happy", kind: "ellipse", cx: 0, cy: -245, rx: "12 * intensity", ry: "3.5 * intensity", fill: "rgba(255,255,255,0.5)" });
+
+  // Laughing — open smile + tongue hint
+  facePrim.push({ when: "mouth == laughing", kind: "ellipse", cx: 0, cy: -244, rx: 18, ry: 9, fill: "#2b1810" });
+  facePrim.push({ when: "mouth == laughing", kind: "ellipse", cx: 0, cy: -242, rx: 9, ry: 4, fill: "#c14a3a" });
+  facePrim.push({ when: "mouth == laughing", kind: "ellipse", cx: 0, cy: -244, rx: 18, ry: 9, stroke: OUTLINE, lineWidth: 1.5 });
+
+  // Sad — frown (intensity-amplified)
+  facePrim.push({ when: "mouth == sad", kind: "arc", cx: 0, cy: "-246 + 4 * intensity", r: 18, startAngle: Math.PI * 1.15, endAngle: Math.PI * 1.85, stroke: "#2b1810", lineWidth: 2.5 });
+
+  // Crying — frown + tear streaks (overlayed lower)
+  facePrim.push({ when: "mouth == crying", kind: "arc", cx: 0, cy: "-244 + 4 * intensity", r: 18, startAngle: Math.PI * 1.15, endAngle: Math.PI * 1.85, stroke: "#2b1810", lineWidth: 2.5 });
+  facePrim.push({ when: "mouth == crying", kind: "polygon", points: [
+    { x: -32, y: -286 }, { x: -30, y: -270 }, { x: -28, y: -286 },
+  ], fill: "rgba(120,180,220,0.6)" });
+  facePrim.push({ when: "mouth == crying", kind: "polygon", points: [
+    { x: 28, y: -286 }, { x: 30, y: -270 }, { x: 32, y: -286 },
+  ], fill: "rgba(120,180,220,0.6)" });
+
+  // Angry — tight straight line + slight downward corners
+  facePrim.push({ when: "mouth == angry", kind: "polygon", points: [
+    { x: -16, y: -254 }, { x: 0, y: -252 }, { x: 16, y: -254 },
+    { x: 16, y: -252 }, { x: 0, y: -250 }, { x: -16, y: -252 },
+  ], fill: "#2b1810" });
 
   // Surprised — small O
-  p.push({ when: "expression == surprised", kind: "ellipse", cx: 0, cy: -252, rx: 6, ry: 8, fill: "#2b1810" });
-  p.push({ when: "expression == surprised", kind: "ellipse", cx: 0, cy: -252, rx: 6, ry: 8, stroke: OUTLINE, lineWidth: 1.3 });
+  facePrim.push({ when: "mouth == surprised", kind: "ellipse", cx: 0, cy: -252, rx: 6, ry: 8, fill: "#2b1810" });
+  facePrim.push({ when: "mouth == surprised", kind: "ellipse", cx: 0, cy: -252, rx: 6, ry: 8, stroke: OUTLINE, lineWidth: 1.3 });
+
+  // Scared — wider stretched O
+  facePrim.push({ when: "mouth == scared", kind: "ellipse", cx: 0, cy: -250, rx: 9, ry: 11, fill: "#2b1810" });
+  facePrim.push({ when: "mouth == scared", kind: "ellipse", cx: 0, cy: -250, rx: 9, ry: 11, stroke: OUTLINE, lineWidth: 1.3 });
+
+  // Embarrassed — small line + blush hint (blush already in cheek warmth)
+  facePrim.push({ when: "mouth == embarrassed", kind: "line", x1: -8, y1: -252, x2: 8, y2: -252, stroke: "#2b1810", lineWidth: 2.2, lineCap: "round" });
+
+  // Smug — half-smile, asymmetric
+  facePrim.push({ when: "mouth == smug", kind: "polygon", points: [
+    { x: -14, y: -255 }, { x: -4, y: -253 }, { x: 6, y: -250 },
+    { x: 14, y: -244 }, { x: 14, y: -242 }, { x: 6, y: -248 },
+    { x: -4, y: -251 }, { x: -14, y: -253 },
+  ], fill: "#2b1810" });
+
+  // Thinking — neutral closed mouth, slight pucker
+  facePrim.push({ when: "mouth == thinking", kind: "ellipse", cx: 0, cy: -252, rx: 6, ry: 1.6, fill: "#2b1810" });
+
+  // --- Viseme-driven mouth shapes (mouth == open|narrow|round|mid|wide|ee) ---
+  // Open "a" — wide rectangle, lower lip drops
+  facePrim.push({ when: "mouth == open", kind: "ellipse", cx: 0, cy: -246, rx: 14, ry: 10, fill: "#2b1810" });
+  facePrim.push({ when: "mouth == open", kind: "ellipse", cx: 0, cy: -244, rx: 10, ry: 4, fill: "#7a2818" });
+  facePrim.push({ when: "mouth == open", kind: "ellipse", cx: 0, cy: -246, rx: 14, ry: 10, stroke: OUTLINE, lineWidth: 1.4 });
+
+  // Narrow "i" — tight horizontal line, slight smile
+  facePrim.push({ when: "mouth == narrow", kind: "polygon", points: [
+    { x: -14, y: -252 }, { x: 0, y: -250 }, { x: 14, y: -252 },
+    { x: 14, y: -251 }, { x: 0, y: -249 }, { x: -14, y: -251 },
+  ], fill: "#2b1810" });
+
+  // Round "u/o" — small round O, pursed
+  facePrim.push({ when: "mouth == round", kind: "circle", cx: 0, cy: -250, r: 7, fill: "#2b1810" });
+  facePrim.push({ when: "mouth == round", kind: "circle", cx: 0, cy: -250, r: 7, stroke: OUTLINE, lineWidth: 1.4 });
+
+  // Mid "e" — medium oval
+  facePrim.push({ when: "mouth == mid", kind: "ellipse", cx: 0, cy: -250, rx: 10, ry: 6, fill: "#2b1810" });
+  facePrim.push({ when: "mouth == mid", kind: "ellipse", cx: 0, cy: -250, rx: 10, ry: 6, stroke: OUTLINE, lineWidth: 1.3 });
+
+  // Wide "ai/ei" — long horizontal open with low pull
+  facePrim.push({ when: "mouth == wide", kind: "ellipse", cx: 0, cy: -248, rx: 18, ry: 8, fill: "#2b1810" });
+  facePrim.push({ when: "mouth == wide", kind: "ellipse", cx: 0, cy: -248, rx: 18, ry: 8, stroke: OUTLINE, lineWidth: 1.4 });
+
+  // Ee "ie/ye" — broad smile, teeth showing
+  facePrim.push({ when: "mouth == ee", kind: "polygon", points: [
+    { x: -16, y: -252 }, { x: -10, y: -248 }, { x: 0, y: -246 },
+    { x: 10, y: -248 }, { x: 16, y: -252 },
+    { x: 14, y: -250 }, { x: 0, y: -244 }, { x: -14, y: -250 },
+  ], fill: "#2b1810" });
+  facePrim.push({ when: "mouth == ee", kind: "rect", x: -10, y: -250, w: 20, h: 2.5, fill: "#fff" });
 
   // Corner shadows
-  p.push({ kind: "circle", cx: -14, cy: -256, r: 1.4, fill: "rgba(0,0,0,0.4)" });
-  p.push({ kind: "circle", cx: 14, cy: -256, r: 1.4, fill: "rgba(0,0,0,0.4)" });
+  facePrim.push({ kind: "circle", cx: -14, cy: -256, r: 1.4, fill: "rgba(0,0,0,0.4)" });
+  facePrim.push({ kind: "circle", cx: 14, cy: -256, r: 1.4, fill: "rgba(0,0,0,0.4)" });
 
   // Chin jawline arc (subtle)
-  p.push({ kind: "arc", cx: 0, cy: -288, r: 56, startAngle: 0.35, endAngle: Math.PI - 0.35,
+  facePrim.push({ kind: "arc", cx: 0, cy: -288, r: 56, startAngle: 0.35, endAngle: Math.PI - 0.35,
     stroke: "rgba(0,0,0,0.32)", lineWidth: 1.3 });
+
+  p.push({ kind: "transform",
+    translate: { x: "headYaw * 14", y: "headPitch * 6" },
+    rotate: "headYaw * 0.15",
+    children: facePrim,
+  });
 
   // ============================================================
   // FACIAL MARKS — scars / dots / moles
@@ -780,6 +901,43 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
   return {
     scale: opts.scale,
     primitives: p,
+  };
+}
+
+/**
+ * Build the shape for a specific view, delegating to the front/back/side
+ * builders. The same `opts` (palette, hat, costume, marks, emblem) drive
+ * every view, which is what keeps a character recognizable across angles.
+ */
+export function buildHumanCharacterShapeForView(
+  opts: HumanCharacterOptions = {},
+  view: HumanCharacterView = "front",
+): ProceduralShape {
+  // Lazy-required to keep the import graph minimal for callers that only
+  // need the canonical front view.
+  if (view === "front") return buildHumanCharacterShape(opts);
+  switch (view) {
+    case "back": return buildBackViewShape(opts);
+    case "sideLeft": return buildSideViewShape(opts, -1);
+    case "sideRight": return buildSideViewShape(opts, 1);
+    case "threeQuarterLeft": return buildThreeQuarterShape(opts, -1);
+    case "threeQuarterRight": return buildThreeQuarterShape(opts, 1);
+  }
+}
+
+/**
+ * Build the standard 4-view bundle (front + back + sideLeft + sideRight)
+ * that the cucumber-asset-generator skill emits for any "important"
+ * character. Caller may add threeQuarter views post-hoc.
+ */
+export function buildHumanCharacterShapesBundle(
+  opts: HumanCharacterOptions = {},
+): Partial<Record<HumanCharacterView, ProceduralShape>> {
+  return {
+    front: buildHumanCharacterShapeForView(opts, "front"),
+    back: buildHumanCharacterShapeForView(opts, "back"),
+    sideLeft: buildHumanCharacterShapeForView(opts, "sideLeft"),
+    sideRight: buildHumanCharacterShapeForView(opts, "sideRight"),
   };
 }
 

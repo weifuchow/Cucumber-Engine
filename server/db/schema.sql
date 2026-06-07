@@ -44,3 +44,29 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_status ON ai_jobs(status);
+
+-- Synthesized TTS audio. The hash is derived from
+-- (provider, voice, emotion, speed, pitch, format, text) so identical
+-- requests dedupe naturally. The audio blob and viseme timing are
+-- stored together so a single SELECT serves the renderer everything it
+-- needs without filesystem detours.
+--
+-- mime is e.g. "audio/mpeg" / "audio/wav" — used directly as the
+-- Content-Type header by the audio file route.
+CREATE TABLE IF NOT EXISTS tts_audio (
+  hash         TEXT PRIMARY KEY,
+  text         TEXT NOT NULL,
+  voice        TEXT NOT NULL,
+  emotion      TEXT,
+  provider     TEXT NOT NULL,
+  format       TEXT NOT NULL,            -- 'mp3' | 'wav'
+  mime         TEXT NOT NULL,
+  duration_sec REAL NOT NULL,
+  visemes_json TEXT NOT NULL,            -- VisemeFrame[] serialized
+  words_json   TEXT,                     -- WordTiming[] serialized (optional)
+  audio_blob   BLOB NOT NULL,            -- the actual audio bytes
+  size_bytes   INTEGER NOT NULL,
+  created_at   INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS idx_tts_audio_voice ON tts_audio(voice);

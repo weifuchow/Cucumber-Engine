@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Camera, Pause, Play, RotateCcw } from "lucide-react";
-import { drawCharacter } from "../engine/characterPainter";
+import { drawCharacter, pickCharacterShape } from "../engine/characterPainter";
 import {
   drawSceneLayer,
   drawShape,
@@ -11,10 +11,25 @@ import {
   type ProceduralShape,
   type SceneLayerKey,
 } from "../engine/proceduralShape";
-import type { AssetManifest } from "../types/schema";
+import { ANGLE_KEYS, type AngleKey, type AssetManifest } from "../types/schema";
 
 const W = 340;
 const H = 420;
+
+// Display order for the angle picker (mirrors the natural turn-around the
+// user would see: side → front → side, then back, then 3/4 variants).
+const ANGLE_DISPLAY_ORDER: AngleKey[] = [
+  "sideLeft", "threeQuarterLeft", "front", "threeQuarterRight", "sideRight", "back",
+];
+
+const ANGLE_LABEL: Record<AngleKey, string> = {
+  front: "正",
+  back: "背",
+  sideLeft: "侧左",
+  sideRight: "侧右",
+  threeQuarterLeft: "斜左",
+  threeQuarterRight: "斜右",
+};
 
 interface ShapeStates {
   actions: string[];
@@ -22,9 +37,28 @@ interface ShapeStates {
   usesProgress: boolean;
 }
 
+/**
+ * Pull declared views from a character manifest. Falls back to `["front"]`
+ * for legacy single-shape manifests so the angle picker UI is non-empty.
+ */
+function getDeclaredViews(asset: AssetManifest): AngleKey[] {
+  const declared = (asset.metadata as { views?: unknown }).views;
+  if (Array.isArray(declared) && declared.length) {
+    const filtered = declared.filter((v): v is AngleKey => ANGLE_KEYS.includes(v as AngleKey));
+    if (filtered.length) return filtered;
+  }
+  const shapes = (asset.metadata as { shapes?: Partial<Record<AngleKey, unknown>> }).shapes;
+  if (shapes) {
+    const keys = (Object.keys(shapes) as AngleKey[]).filter((k) => ANGLE_KEYS.includes(k));
+    if (keys.length) return keys;
+  }
+  return ["front"];
+}
+
 export function AssetPreviewStage({ asset }: { asset: AssetManifest }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const states = useMemo(() => extractShapeStates(asset), [asset]);
+  const declaredViews = useMemo(() => getDeclaredViews(asset), [asset]);
   const [action, setAction] = useState<string>(states.actions[0] ?? "idle");
   const [expression, setExpression] = useState<string>(states.expressions[0] ?? "neutral");
   const [playing, setPlaying] = useState(true);
@@ -32,6 +66,7 @@ export function AssetPreviewStage({ asset }: { asset: AssetManifest }) {
   // 2.5D preview controls
   const [cameraPan, setCameraPan] = useState(false);
   const [characterZ, setCharacterZ] = useState(0);
+  const [angle, setAngle] = useState<AngleKey>(declaredViews[0] ?? "front");
 
   useEffect(() => {
     setAction(states.actions[0] ?? "idle");
@@ -39,7 +74,8 @@ export function AssetPreviewStage({ asset }: { asset: AssetManifest }) {
     setTime(0);
     setCameraPan(false);
     setCharacterZ(0);
-  }, [asset.assetId, states.actions, states.expressions]);
+    setAngle(declaredViews[0] ?? "front");
+  }, [asset.assetId, states.actions, states.expressions, declaredViews]);
 
   useEffect(() => {
     if (!playing) return;
@@ -63,10 +99,12 @@ export function AssetPreviewStage({ asset }: { asset: AssetManifest }) {
     ctx.fillStyle = "#eef3f0";
     ctx.fillRect(0, 0, W, H);
 
-    const shape = asset.metadata.shape;
-    if (!isProceduralShape(shape)) return;
-
     if (asset.type === "character") {
+      // Resolve the current-angle shape first so the preview matches the
+      // angle picker. Falls back to legacy `metadata.shape` for older
+      // single-view assets via pickCharacterShape().
+      const { shape: angleShape } = pickCharacterShape(asset, angle);
+      if (!angleShape) return;
       // Apply depth scaling + dimming based on the z slider so users can
       // dial in the same z-depth behavior the timeline applies.
       const depthScale = 1 / (1 + characterZ * 0.0015);
@@ -76,15 +114,19 @@ export function AssetPreviewStage({ asset }: { asset: AssetManifest }) {
       drawCharacter(ctx, asset, {
         x: W / 2,
         y: H - 30,
-        scale: (shape.preview?.scale ?? 0.78) * depthScale,
+        scale: (angleShape.preview?.scale ?? 0.78) * depthScale,
         expression,
         action,
         time,
         z: characterZ,
+        angle,
       });
       ctx.restore();
       return;
     }
+
+    const shape = asset.metadata.shape;
+    if (!isProceduralShape(shape)) return;
 
     const palette = (asset.metadata.palette ?? {}) as Record<string, string>;
     const fit = shape.preview?.fit ?? "center";
@@ -135,7 +177,7 @@ export function AssetPreviewStage({ asset }: { asset: AssetManifest }) {
     ctx.translate(W / 2, H / 2);
     if (shape.preview?.scale) ctx.scale(shape.preview.scale, shape.preview.scale);
     drawShape(ctx, shape, palette, { time });
-  }, [asset, action, expression, time, states.usesProgress, cameraPan, characterZ]);
+  }, [asset, action, expression, time, states.usesProgress, cameraPan, characterZ, angle]);
 
   const hasActionToggle = states.actions.length > 1;
   const hasExpressionToggle = states.expressions.length > 1;
@@ -143,6 +185,10 @@ export function AssetPreviewStage({ asset }: { asset: AssetManifest }) {
   const shape = asset.metadata.shape;
   const sceneHasLayers = isProceduralShape(shape) && hasSceneLayers(shape);
   const isCharacter = asset.type === "character";
+  const hasAngleToggle = isCharacter && declaredViews.length > 1;
+  // Display order: only show the views the manifest actually declares,
+  // but sort them in the natural turn order.
+  const angleButtons = ANGLE_DISPLAY_ORDER.filter((a) => declaredViews.includes(a));
 
   return (
     <div className="asset-preview-stage">
@@ -161,6 +207,24 @@ export function AssetPreviewStage({ asset }: { asset: AssetManifest }) {
                   onClick={() => setAction(value)}
                 >
                   {value}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {hasAngleToggle ? (
+          <div className="stage-control-group">
+            <small>视角</small>
+            <div className="stage-pill-row">
+              {angleButtons.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  className={`stage-pill ${value === angle ? "is-active" : ""}`}
+                  onClick={() => setAngle(value)}
+                  title={value}
+                >
+                  {ANGLE_LABEL[value]}
                 </button>
               ))}
             </div>
