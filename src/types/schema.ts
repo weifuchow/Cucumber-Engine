@@ -143,6 +143,22 @@ export interface Project {
      * docs/acceptance-<bar>.md. Defaults to undefined (baseline 2.5D only).
      */
     styleBar?: "luoxiaohei" | "shinkai" | "ghibli" | "jiangnan-baiyi";
+    /**
+     * Post-processing grade applied to every frame by PreviewCanvas. All
+     * fields optional — undefined falls back to the default tasteful
+     * grade (slight desat, soft contrast bump, faint sepia + vignette +
+     * film grain). Set `enabled: false` to render raw 2.5D output for
+     * authoring/debug.
+     */
+    postFX?: {
+      enabled?: boolean;
+      saturate?: number;     // 1 = unchanged; 0.94 default
+      contrast?: number;     // 1 = unchanged; 1.06 default
+      brightness?: number;   // 1 = unchanged
+      sepia?: number;        // 0 = none; 0.03 default
+      vignette?: number;     // 0..1 — edge darkening; 0.28 default
+      noiseAlpha?: number;   // 0..1 — film grain; 0.07 default
+    };
   };
   preview: {
     activeChapterId: string;
@@ -279,7 +295,31 @@ export type TimelineEvent =
         zoom: number;
         duration: number;
         transition: "cut" | "smooth" | "fade";
+        /**
+         * Hand-held camera jitter, in pixels of peak displacement. The
+         * renderer adds `sin(time * 7) * jitter` to camera.x and a smaller
+         * orthogonal wobble to camera.y for the duration of this segment.
+         * Default 0 (locked tripod).
+         */
+        jitter?: number;
       };
+    }
+  | {
+      /**
+       * Frame-hold: clamp the renderer's effective time to integer steps
+       * of `fps` while `time ∈ [event.time, event.time + duration]`. Use
+       * to mix "on twos / on threes" (12 fps / 8 fps) into otherwise
+       * smooth 30 fps preview, giving the stylized stutter that real 2D
+       * animation uses for impact / comedy beats.
+       *
+       *   fps: 6  → very chunky (anticipation hold)
+       *   fps: 12 → standard cel-animation "on twos"
+       *   fps: 24 → film cadence
+       */
+      time: number;
+      type: "frameHold";
+      fps: number;
+      duration: number;
     }
   | { time: number; type: "subtitle"; text: string; duration: number }
   | { time: number; type: "bgmPlay"; assetId: string; volume: number }

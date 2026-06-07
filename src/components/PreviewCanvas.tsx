@@ -299,6 +299,11 @@ export function PreviewCanvas({ project, library, time, playing = true }: Previe
       ctx.restore();
     }
 
+    // ------- post-FX pass: global film grain + vignette + LUT --------------
+    // Applied AFTER the scene/characters/effects are flat but BEFORE the
+    // HUD overlay so subtitles + timer stay crisp.
+    paintPostFX(ctx, project);
+
     drawHud(ctx, state.caption, time, state.camera.mode);
   }, [library, project, time]);
 
@@ -389,6 +394,119 @@ function paintSceneLayer(
   }
   // Legacy: a flat shape with no layer split is treated entirely as midground.
   if (layer === "midground") drawShape(ctx, shape, palette, { time });
+}
+
+/**
+ * Per-canvas memoized noise pattern for the post-FX grain overlay. Cheap
+ * to compute (one ImageData, ~16 KB) but we only need it once per ctx.
+ */
+const postFxNoiseCache = new WeakMap<CanvasRenderingContext2D, CanvasPattern>();
+
+function getPostFxNoise(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+  const cached = postFxNoiseCache.get(ctx);
+  if (cached) return cached;
+  const TILE = 128;
+  const off = document.createElement("canvas");
+  off.width = TILE; off.height = TILE;
+  const octx = off.getContext("2d");
+  if (!octx) return null;
+  const img = octx.createImageData(TILE, TILE);
+  for (let i = 0; i < TILE * TILE; i++) {
+    // Cheap xorshift-style hash. Same algorithm as engine.proceduralShape
+    // but inlined here to avoid an import for a 3-line helper.
+    let n = (i * 374761393 + 7919) | 0;
+    n = (n ^ (n >>> 16)) * 0x45d9f3b | 0;
+    n = (n ^ (n >>> 16)) * 0x45d9f3b | 0;
+    n = (n ^ (n >>> 16)) >>> 0;
+    const g = n % 256;
+    img.data[i * 4 + 0] = g;
+    img.data[i * 4 + 1] = g;
+    img.data[i * 4 + 2] = g;
+    img.data[i * 4 + 3] = 255;
+  }
+  octx.putImageData(img, 0, 0);
+  const pattern = ctx.createPattern(off, "repeat");
+  if (pattern) postFxNoiseCache.set(ctx, pattern);
+  return pattern;
+}
+
+interface PostFxConfig {
+  enabled?: boolean;
+  saturate?: number;
+  contrast?: number;
+  sepia?: number;
+  brightness?: number;
+  vignette?: number;
+  noiseAlpha?: number;
+}
+
+const DEFAULT_POSTFX: Required<PostFxConfig> = {
+  enabled:    true,
+  saturate:   0.94,
+  contrast:   1.06,
+  sepia:      0.03,
+  brightness: 1.00,
+  vignette:   0.28,
+  noiseAlpha: 0.07,
+};
+
+/**
+ * Global post-processing: color grade + vignette + film grain. Applied
+ * once per frame after the scene is drawn but before the HUD overlay
+ * (so subtitles + timer stay crisp). All three stages are independently
+ * disable-able via `project.config.postFX`.
+ *
+ * Why this matters: the single biggest tell that "this looks like Flash"
+ * is uniformly-saturated flat colors. A 5 % desat + 6 % contrast bump +
+ * tiny sepia tint + soft grain at α 0.07 collectively shift the read
+ * from "vector" to "painterly cel" without measurably hurting perf.
+ */
+function paintPostFX(ctx: CanvasRenderingContext2D, project: Project) {
+  const config = ((project.config as { postFX?: PostFxConfig }).postFX) ?? {};
+  const cfg = { ...DEFAULT_POSTFX, ...config };
+  if (cfg.enabled === false) return;
+
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+
+  // Stage 1 — color grade. We re-paint the existing canvas into itself
+  // through a Canvas filter. cheaper than a per-pixel loop.
+  const filterParts: string[] = [];
+  if (cfg.saturate   !== 1) filterParts.push(`saturate(${cfg.saturate})`);
+  if (cfg.contrast   !== 1) filterParts.push(`contrast(${cfg.contrast})`);
+  if (cfg.brightness !== 1) filterParts.push(`brightness(${cfg.brightness})`);
+  if (cfg.sepia      !== 0) filterParts.push(`sepia(${cfg.sepia})`);
+  if (filterParts.length) {
+    ctx.save();
+    ctx.filter = filterParts.join(" ");
+    ctx.globalCompositeOperation = "copy";
+    ctx.drawImage(ctx.canvas, 0, 0);
+    ctx.restore();
+  }
+
+  // Stage 2 — vignette. Radial gradient darkening edges.
+  if (cfg.vignette > 0) {
+    const grad = ctx.createRadialGradient(w / 2, h / 2, h * 0.32, w / 2, h / 2, Math.max(w, h) * 0.7);
+    grad.addColorStop(0, "rgba(0,0,0,0)");
+    grad.addColorStop(1, `rgba(0,0,0,${cfg.vignette})`);
+    ctx.save();
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+
+  // Stage 3 — film grain.
+  if (cfg.noiseAlpha > 0) {
+    const pattern = getPostFxNoise(ctx);
+    if (pattern) {
+      ctx.save();
+      ctx.globalCompositeOperation = "soft-light";
+      ctx.globalAlpha = cfg.noiseAlpha;
+      ctx.fillStyle = pattern;
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    }
+  }
 }
 
 function drawHud(ctx: CanvasRenderingContext2D, caption: string, time: number, mode: string) {

@@ -192,6 +192,24 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
   }
 
   // ============================================================
+  // AMBIENT OCCLUSION — soft dark ellipses at junctions
+  // ============================================================
+  //
+  // These darken the natural "concave" spots (between-legs gap, under
+  // torso, armpit-projection) that an actual light source can't reach.
+  // Keeps the silhouette anchored without committing to full lighting.
+  // Each is a low-alpha soft ellipse drawn BEFORE the torso so torso
+  // outlines + gradients sit on top.
+
+  // Between legs (only when stance is closed — idle / defend / victory)
+  p.push({ when: "action not in [walking]", kind: "ellipse",
+    cx: 0, cy: -28, rx: 14, ry: 18,
+    fill: "rgba(20,16,12,0.32)" });
+  // Under torso shadow on pants
+  p.push({ kind: "ellipse", cx: 0, cy: -44, rx: 48, ry: 7,
+    fill: "rgba(20,16,12,0.28)" });
+
+  // ============================================================
   // TORSO — base + gradient + collar / opening based on costume
   // ============================================================
   // Belt (skip if costume is tank top)
@@ -481,17 +499,25 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
   p.push({ kind: "circle", cx: 0, cy: -310, r: 70, stroke: OUTLINE, lineWidth: 1.8 });
 
   // ============================================================
+  // ============================================================
+  // HAIR — buffered into hairPrim so the whole thing micro-sways
+  // with `sin(time * 0.6)`. Without the wrap the head reads as a
+  // wig pinned to the skull; this gives that subtle 'breathing'
+  // motion that anime cels do via hold + retake on twos.
+  // ============================================================
+  const hairPrim: ConditionalPrimitive[] = [];
+
   // HAIR — multiple polygon wisps, soft tips, with highlight strip
   // ============================================================
   if (hair !== "bald") {
     // Back hair mass (sits behind head)
-    p.push({ kind: "polygon", points: [
+    hairPrim.push({ kind: "polygon", points: [
       { x: -72, y: -340 }, { x: -56, y: -370 }, { x: -28, y: -380 },
       { x: 0, y: -382 }, { x: 28, y: -380 }, { x: 56, y: -370 },
       { x: 72, y: -340 }, { x: 70, y: -288 }, { x: -70, y: -288 },
     ], fill: { palette: "hair" }, stroke: OUTLINE, lineWidth: 1.5 });
     // Crown highlight strip — radial
-    p.push({ kind: "ellipse", cx: -10, cy: -362, rx: 36, ry: 14,
+    hairPrim.push({ kind: "ellipse", cx: -10, cy: -362, rx: 36, ry: 14,
       fill: { gradient: "radial", x0: -16, y0: -368, r0: 2, x1: -10, y1: -362, r1: 36,
         stops: [
           { at: 0, color: "rgba(255,255,255,0.4)" },
@@ -510,7 +536,7 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
         [26, -332, 46],
       ];
       for (const [x1, ytip, x2] of fringe) {
-        p.push({ kind: "polygon", points: [
+        hairPrim.push({ kind: "polygon", points: [
           { x: x1, y: -332 },
           { x: (x1 + x2) / 2 + 2, y: ytip },
           { x: x2, y: -330 },
@@ -525,7 +551,7 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
         [4, -376, 22], [22, -360, 42], [42, -340, 60],
       ];
       for (const [x1, ytip, x2] of tips) {
-        p.push({ kind: "polygon", points: [
+        hairPrim.push({ kind: "polygon", points: [
           { x: x1, y: -320 }, { x: (x1 + x2) / 2, y: ytip },
           { x: x2, y: -320 }, { x: x2 - 4, y: -296 },
           { x: x1 + 4, y: -296 },
@@ -533,25 +559,25 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
       }
     } else if (hair === "short") {
       // close-cropped — single chunky polygon over the crown
-      p.push({ kind: "polygon", points: [
+      hairPrim.push({ kind: "polygon", points: [
         { x: -64, y: -325 }, { x: -50, y: -360 }, { x: -20, y: -372 },
         { x: 0, y: -374 }, { x: 20, y: -372 }, { x: 50, y: -360 },
         { x: 64, y: -325 }, { x: 56, y: -305 }, { x: -56, y: -305 },
       ], fill: { palette: "hair" }, stroke: OUTLINE, lineWidth: 1.5 });
     } else if (hair === "flowing") {
       // Long flowing — extra mass behind shoulders
-      p.push({ kind: "polygon", points: [
+      hairPrim.push({ kind: "polygon", points: [
         { x: -82, y: -345 }, { x: -70, y: -240 }, { x: -56, y: -200 },
         { x: -44, y: -245 }, { x: -50, y: -310 },
       ], fill: { palette: "hair", darken: 18 }, stroke: OUTLINE, lineWidth: 1.4 });
-      p.push({ kind: "polygon", points: [
+      hairPrim.push({ kind: "polygon", points: [
         { x: 82, y: -345 }, { x: 70, y: -240 }, { x: 56, y: -200 },
         { x: 44, y: -245 }, { x: 50, y: -310 },
       ], fill: { palette: "hair", darken: 18 }, stroke: OUTLINE, lineWidth: 1.4 });
       // Soft side-swept fringe
       for (let i = 0; i < 5; i++) {
         const dx = -50 + i * 22;
-        p.push({ kind: "polygon", points: [
+        hairPrim.push({ kind: "polygon", points: [
           { x: dx, y: -340 }, { x: dx + 14, y: -348 },
           { x: dx + 18, y: -296 }, { x: dx + 4, y: -298 },
         ], fill: { palette: "hair" }, stroke: OUTLINE_SOFT, lineWidth: 1.1 });
@@ -561,7 +587,7 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
     // Sideburns (subtle, except short/flowing)
     if (hair === "fringe" || hair === "spiky") {
       for (const sign of [-1, 1]) {
-        p.push({ kind: "polygon", points: [
+        hairPrim.push({ kind: "polygon", points: [
           { x: sign * 72, y: -322 }, { x: sign * 58, y: -322 },
           { x: sign * 56, y: -274 }, { x: sign * 68, y: -280 },
         ], fill: { palette: "hair", darken: 18 }, stroke: OUTLINE_SOFT, lineWidth: 1.1 });
@@ -791,7 +817,7 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
   facePrim.push({ kind: "arc", cx: 0, cy: -288, r: 56, startAngle: 0.35, endAngle: Math.PI - 0.35,
     stroke: "rgba(0,0,0,0.32)", lineWidth: 1.3 });
 
-  p.push({ kind: "transform",
+  hairPrim.push({ kind: "transform",
     translate: { x: "headYaw * 14", y: "headPitch * 6" },
     rotate: "headYaw * 0.15",
     children: facePrim,
@@ -804,23 +830,29 @@ export function buildHumanCharacterShape(opts: HumanCharacterOptions = {}): Proc
     const pos = markPosition(mark.at);
     const color = mark.color ?? "rgba(150,60,40,0.85)";
     if (mark.kind === "scar_diagonal") {
-      p.push({ kind: "polygon", points: [
+      hairPrim.push({ kind: "polygon", points: [
         { x: pos.x - 4, y: pos.y + 5 },
         { x: pos.x + 5, y: pos.y - 4 },
         { x: pos.x + 6, y: pos.y - 3 },
         { x: pos.x - 3, y: pos.y + 6 },
       ], fill: color });
     } else if (mark.kind === "scar_x") {
-      p.push({ kind: "line", x1: pos.x - 5, y1: pos.y - 5, x2: pos.x + 5, y2: pos.y + 5, stroke: color, lineWidth: 2, lineCap: "round" });
-      p.push({ kind: "line", x1: pos.x + 5, y1: pos.y - 5, x2: pos.x - 5, y2: pos.y + 5, stroke: color, lineWidth: 2, lineCap: "round" });
+      hairPrim.push({ kind: "line", x1: pos.x - 5, y1: pos.y - 5, x2: pos.x + 5, y2: pos.y + 5, stroke: color, lineWidth: 2, lineCap: "round" });
+      hairPrim.push({ kind: "line", x1: pos.x + 5, y1: pos.y - 5, x2: pos.x - 5, y2: pos.y + 5, stroke: color, lineWidth: 2, lineCap: "round" });
     } else if (mark.kind === "mark_dot") {
-      p.push({ kind: "circle", cx: pos.x, cy: pos.y, r: 2.5, fill: color });
+      hairPrim.push({ kind: "circle", cx: pos.x, cy: pos.y, r: 2.5, fill: color });
     } else if (mark.kind === "mole") {
-      p.push({ kind: "circle", cx: pos.x, cy: pos.y, r: 1.8, fill: "rgba(40,20,10,0.8)" });
+      hairPrim.push({ kind: "circle", cx: pos.x, cy: pos.y, r: 1.8, fill: "rgba(40,20,10,0.8)" });
     }
   }
 
   // ============================================================
+
+  p.push({ kind: "transform",
+    translate: { x: 0, y: 0 },
+    rotate: "sin(time * 0.6) * 0.014",
+    children: hairPrim,
+  });
   // HAT (drawn LAST so it sits on top of the hair)
   // ============================================================
   if (hat === "straw") {

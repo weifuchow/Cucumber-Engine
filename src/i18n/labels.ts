@@ -20,6 +20,7 @@ export const timelineEventTypeLabels: Record<TimelineEvent["type"], string> = {
   propChange: "道具变化",
   effectPlay: "特效播放",
   cameraChange: "镜头切换",
+  frameHold: "帧率切换",
   subtitle: "字幕",
   bgmPlay: "背景音乐",
   dialogue: "对白",

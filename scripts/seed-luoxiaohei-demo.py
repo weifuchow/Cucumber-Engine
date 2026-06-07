@@ -32,6 +32,8 @@ OUTLINE       = "rgba(26,22,18,0.85)"   # warmer than #000 (LX-W4)
 SHADOW_DARK   = "rgba(20,18,16,0.42)"
 SHADOW_SOFT   = "rgba(20,18,16,0.22)"
 CHEEK_PINK    = "rgba(220,120,110,0.32)"
+RIM_WARM      = "rgba(255,232,180,0.72)"  # rim-light for character silhouette
+RIM_COOL      = "rgba(170,200,210,0.55)"  # cool rim for scene mid layer
 
 # ---------------------------------------------------------------------------
 # Character: 小风 (a 罗小黑-style chibi boy companion — original character)
@@ -129,7 +131,8 @@ def character_xiaofeng() -> dict:
         })
 
     # ----- Torso / cape (the hooded silhouette) -----
-    # Cape body — a wider polygon for the hooded look
+    # Cape body — a wider polygon for the hooded look, with a warm rim
+    # light tracing the upper-left edge (separates character from bg).
     p.append({
         "kind": "polygon", "points": [
             {"x": -42, "y": -160}, {"x": 42, "y": -160},
@@ -139,6 +142,7 @@ def character_xiaofeng() -> dict:
         ],
         "fill": { "palette": "body" },
         "stroke": OUTLINE, "lineWidth": 1.6,
+        "rimLight": { "color": RIM_WARM, "fromAngle": -2.1, "width": 2.2, "falloff": 0.45 },
     })
     # cel-shadow on right side of cape
     p.append(cel_shadow_polygon([
@@ -308,17 +312,28 @@ def character_xiaofeng() -> dict:
                                  {"x": 7, "y": -178}, {"x": 0, "y": -174}, {"x": -7, "y": -178}],
                       "fill": "#1a1612"})
 
-    # ----- Hood (drawn over the head) -----
+    # ----- Hood (drawn over the head, with rim light) -----
     face_prim.append({"kind": "polygon", "points": [
         {"x": -50, "y": -240}, {"x": -42, "y": -252}, {"x": -28, "y": -256},
         {"x": -10, "y": -258}, {"x": 10, "y": -258}, {"x": 28, "y": -256},
         {"x": 42, "y": -252}, {"x": 50, "y": -240},
         {"x": 48, "y": -224}, {"x": -48, "y": -224},
-    ], "fill": {"palette": "body"}, "stroke": OUTLINE, "lineWidth": 1.6})
-    # hair tuft showing under hood
-    face_prim.append({"kind": "polygon", "points": [
-        {"x": -8, "y": -240}, {"x": 0, "y": -250}, {"x": 8, "y": -240}, {"x": 0, "y": -234},
-    ], "fill": "#1a1612"})
+    ], "fill": {"palette": "body"}, "stroke": OUTLINE, "lineWidth": 1.6,
+       "rimLight": {"color": RIM_WARM, "fromAngle": -2.0, "width": 2, "falloff": 0.35}})
+    # hair tuft showing under hood — drawn as a brush stroke instead of
+    # a flat polygon so it reads as marker, not vector.
+    face_prim.append({"kind": "brush",
+        "points": [
+            {"x": -8, "y": -240}, {"x": -4, "y": -246}, {"x": 0, "y": -250},
+            {"x": 4, "y": -246}, {"x": 8, "y": -240}, {"x": 0, "y": -234},
+        ],
+        "stroke": "#1a1612",
+        "closed": True,
+        "passes": 4,
+        "jitter": 1.1,
+        "widthRange": [0.8, 2.4],
+        "alphaRange": [0.55, 0.95],
+        "seed": 211})
 
     # Wrap the face block in a head-pose transform (responds to headYaw / headPitch)
     p.append({
@@ -395,6 +410,13 @@ def scene_forest_morning() -> dict:
             ],
         },
     })
+    # Paper-grain noise overlay tinted into the watercolor wash — kills
+    # the "flat vector sky" read in 70 % of the frame area.
+    bg.append({
+        "kind": "noise",
+        "x": -200, "y": 0, "w": 1680, "h": 720,
+        "scale": 0.9, "alpha": 0.13, "blendMode": "multiply", "seed": 4242,
+    })
     # Distant tree silhouettes (5 broad polygons)
     for i, (cx, cy, scale) in enumerate([(180, 320, 1.0), (380, 300, 0.9),
                                            (620, 310, 0.95), (860, 295, 0.85),
@@ -442,7 +464,7 @@ def scene_forest_morning() -> dict:
             ],
             "fill": SHADOW_DARK,
         })
-        # leafy crown
+        # leafy crown — gets a cool rim light tracing upper edge (sky bounce)
         mid.append({
             "kind": "polygon",
             "points": [
@@ -452,6 +474,7 @@ def scene_forest_morning() -> dict:
                 {"x": cx + 70, "y": 400}, {"x": cx - 70, "y": 400},
             ],
             "fill": "#5e7848", "stroke": OUTLINE, "lineWidth": 1.5,
+            "rimLight": {"color": RIM_COOL, "fromAngle": -1.7, "width": 2, "falloff": 0.4},
         })
         # leaf highlight (left side)
         mid.append({
@@ -622,7 +645,7 @@ def project_luoxiaohei_demo() -> dict:
             "mode": "wide", "x": 480, "y": 360, "zoom": 0.95,
             "duration": 0, "transition": "cut",
         }},
-        {"time": 0, "type": "subtitle", "text": "（清晨的森林，光从叶隙洒下）", "duration": 2.5},
+        {"time": 0, "type": "narration", "text": "清晨的森林，光从叶隙洒下", "duration": 2.5},
 
         # ----- 1.8 s: 小风 enters from screen-right -----
         {"time": 1.8, "type": "characterAppear", "target": "character_xiaofeng_001",
@@ -636,6 +659,7 @@ def project_luoxiaohei_demo() -> dict:
         {"time": 2.0, "type": "cameraChange", "camera": {
             "mode": "wide", "x": 700, "y": 360, "zoom": 1.0,
             "duration": 3.5, "transition": "smooth",
+            "jitter": 0.8,   # subtle handheld breath during pan
         }},
 
         # ----- 5.5 s: 小风 stops + 转身 to front + look up -----
@@ -669,6 +693,10 @@ def project_luoxiaohei_demo() -> dict:
         }},
 
         # ----- 12.0 s: attack action + speed-line effect (LX-T5) -----
+        # Frame-hold "on threes" (10 fps) for the brief impact beat —
+        # the world stutters for 0.4 s while the speed lines burst, then
+        # snaps back to smooth 30 fps. Classic anime impact punctuation.
+        {"time": 12.0, "type": "frameHold", "fps": 10, "duration": 0.4},
         {"time": 12.0, "type": "characterAction", "target": "character_xiaofeng_001",
          "action": {"name": "attack", "params": {}}},
         {"time": 12.0, "type": "effectPlay", "effectId": "effect_speed_lines_001",
@@ -684,11 +712,12 @@ def project_luoxiaohei_demo() -> dict:
         {"time": 14.0, "type": "cameraChange", "camera": {
             "mode": "wide", "x": 420, "y": 360, "zoom": 1.0,
             "duration": 4.0, "transition": "smooth",
+            "jitter": 0.7,
         }},
 
         # ----- 18.0 s: 小风 exits, LX-T7 breath pause -----
         {"time": 18.0, "type": "characterDisappear", "target": "character_xiaofeng_001"},
-        {"time": 18.0, "type": "subtitle", "text": "（脚步声远去）", "duration": 3.0},
+        {"time": 18.0, "type": "narration", "text": "脚步声远去", "duration": 3.0},
 
         # ----- 21.0 s: final wide reset -----
         {"time": 21.0, "type": "cameraChange", "camera": {

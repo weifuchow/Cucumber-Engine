@@ -54,9 +54,32 @@ export interface ShadowSpec {
   color: string;
 }
 
+/**
+ * Rim light overlay — draws a directional highlight on the silhouette edge
+ * of the primitive, simulating light wrapping around a 3D form. The shape's
+ * own outline is unaffected; this stroke is drawn AFTER the main fill+stroke
+ * with a linear-gradient stroke that fades from `color` to transparent
+ * across the shape's bounding box, oriented along `fromAngle`.
+ *
+ * Use cases: separating characters from background (Hollow Knight reads),
+ * the bright cyan/orange wrap that makes Spirited Away figures pop.
+ *
+ *   fromAngle — radians; 0 = light from screen-left, PI/2 = from above
+ *   color     — usually a warm white at low alpha, e.g. "rgba(255,235,180,0.75)"
+ *   width     — stroke width of the rim, typically 1.5–3 px
+ *   falloff   — 0..1; how quickly the gradient fades. 0.3 = sharp rim,
+ *               0.7 = soft wrap
+ */
+export interface RimLightSpec {
+  color: string;
+  fromAngle?: NumExpr;
+  width?: NumExpr;
+  falloff?: number;
+}
+
 export type Primitive =
-  | { kind: "roundedRect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr; r: NumExpr; fill?: ColorSpec; stroke?: ColorSpec; lineWidth?: NumExpr; shadow?: ShadowSpec }
-  | { kind: "rect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr; fill?: ColorSpec; stroke?: ColorSpec; lineWidth?: NumExpr; shadow?: ShadowSpec }
+  | { kind: "roundedRect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr; r: NumExpr; fill?: ColorSpec; stroke?: ColorSpec; lineWidth?: NumExpr; shadow?: ShadowSpec; rimLight?: RimLightSpec }
+  | { kind: "rect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr; fill?: ColorSpec; stroke?: ColorSpec; lineWidth?: NumExpr; shadow?: ShadowSpec; rimLight?: RimLightSpec }
   | {
       kind: "circle";
       cx: NumExpr;
@@ -66,6 +89,7 @@ export type Primitive =
       stroke?: ColorSpec;
       lineWidth?: NumExpr;
       shadow?: ShadowSpec;
+      rimLight?: RimLightSpec;
     }
   | {
       kind: "ellipse";
@@ -80,6 +104,7 @@ export type Primitive =
       stroke?: ColorSpec;
       lineWidth?: NumExpr;
       shadow?: ShadowSpec;
+      rimLight?: RimLightSpec;
     }
   | {
       kind: "line";
@@ -112,6 +137,7 @@ export type Primitive =
       lineWidth?: NumExpr;
       closed?: boolean;
       shadow?: ShadowSpec;
+      rimLight?: RimLightSpec;
     }
   | {
       kind: "starBurst";
@@ -142,6 +168,8 @@ export type Primitive =
       translate?: { x: NumExpr; y: NumExpr };
       rotate?: NumExpr;
       scale?: NumExpr | { x: NumExpr; y: NumExpr };
+      /** Apply Canvas filter (e.g. blur) to children. Use `blurPx` for the common case. */
+      blurPx?: NumExpr;
       children: ConditionalPrimitive[];
     }
   | {
@@ -185,6 +213,62 @@ export type Primitive =
        * "spark" draws a 4-spike asterisk at radius `r`.
        */
       particleShape?: "circle" | "rect" | "spark";
+    }
+  | {
+      /**
+       * Paper / film-grain noise overlay. Fills the rect (x, y, w, h) with
+       * pseudo-random monochromatic noise alpha-blended over whatever has
+       * been drawn underneath.
+       *
+       * Implementation uses a tiled noise texture cached per CanvasRenderingContext2D,
+       * so the cost is bounded regardless of overlay size. Tile size is fixed
+       * at 128×128 → ~16 KB ImageData per ctx, rendered once.
+       *
+       * Purpose: kills the "vector / SVG" look that pure flat fills produce.
+       * One full-canvas noise rect at alpha 0.10–0.18 is enough to shift
+       * the read from Flash-vector → painterly.
+       *
+       *   scale     — 0.3 (chunky grain) … 2.5 (fine grit). Default 1.
+       *   alpha     — 0..1, blend strength. Default 0.15.
+       *   blendMode — Canvas globalCompositeOperation. Default "multiply".
+       *               Try "soft-light" for a warmer painterly feel.
+       *   seed      — integer; freezes the pattern so it doesn't shimmer.
+       */
+      kind: "noise";
+      x: NumExpr;
+      y: NumExpr;
+      w: NumExpr;
+      h: NumExpr;
+      scale?: NumExpr;
+      alpha?: NumExpr;
+      blendMode?: GlobalCompositeOperation;
+      seed?: number;
+    }
+  | {
+      /**
+       * Hand-drawn brush stroke — renders a path as 3–5 slightly-offset
+       * thin strokes with alpha variation, giving the appearance of a
+       * cel-animation marker / brush instead of a clean vector line.
+       *
+       * Same path API as `polygon` (open or closed via `closed`), plus:
+       *   passes      — 3..6, number of offset strokes. Default 4.
+       *   jitter      — px max offset perpendicular to path. Default 1.2.
+       *   widthRange  — [min, max] stroke width per pass. Default [0.6, 1.6].
+       *   alphaRange  — [min, max] stroke alpha per pass. Default [0.4, 0.95].
+       *   seed        — deterministic offset/width/alpha pattern.
+       *
+       * Use case: replace `polygon stroke` on hair locks / scars / cheek
+       * lines with brush — instantly lifts the asset off the SVG plane.
+       */
+      kind: "brush";
+      points: Array<{ x: NumExpr; y: NumExpr }>;
+      stroke: ColorSpec;
+      closed?: boolean;
+      passes?: number;
+      jitter?: NumExpr;
+      widthRange?: [number, number];
+      alphaRange?: [number, number];
+      seed?: number;
     };
 
 export type ClipShape =
@@ -296,9 +380,13 @@ function drawConditional(
     ctx.shadowColor = interpolate(shadow.color, state);
     drawPrimitive(ctx, prim, palette, state);
     ctx.restore();
-    return;
+  } else {
+    drawPrimitive(ctx, prim, palette, state);
   }
-  drawPrimitive(ctx, prim, palette, state);
+  // RimLight is overlaid AFTER the main fill+stroke so it sits on the
+  // silhouette edge, independent of the shadow path above.
+  const rim = (prim as { rimLight?: RimLightSpec }).rimLight;
+  if (rim) drawRimLight(ctx, prim, rim, state);
 }
 
 function drawPrimitive(
@@ -437,6 +525,13 @@ function drawPrimitive(
           ctx.scale(s, s);
         }
       }
+      // blurPx applies a Canvas filter to everything drawn under this
+      // transform — used for depth-of-field on background/foreground
+      // scene layers and for the soft-edge halo on glow effects.
+      if (prim.blurPx !== undefined) {
+        const px = evalNum(prim.blurPx, state);
+        if (px > 0) ctx.filter = `blur(${px}px)`;
+      }
       for (const child of prim.children) drawConditional(ctx, child, palette, state);
       ctx.restore();
       return;
@@ -487,6 +582,14 @@ function drawPrimitive(
         }
         if (prim.shadow) ctx.restore();
       }
+      return;
+    }
+    case "noise": {
+      drawNoise(ctx, prim, state);
+      return;
+    }
+    case "brush": {
+      drawBrush(ctx, prim, palette, state);
       return;
     }
     case "clip": {
@@ -793,4 +896,309 @@ export function isProceduralShape(value: unknown): value is ProceduralShape {
     value !== null &&
     Array.isArray((value as { primitives?: unknown }).primitives)
   );
+}
+
+// =====================================================================
+// PAINTERLY HELPERS — noise overlay, brush stroke, rim light
+// =====================================================================
+
+/**
+ * Lightweight integer hash (xorshift) used to deterministically seed
+ * jitter in brush + noise without bringing in a real PRNG.
+ */
+function hash32(x: number): number {
+  let n = x | 0;
+  n = (n ^ 61) ^ (n >>> 16);
+  n = (n + (n << 3)) | 0;
+  n = n ^ (n >>> 4);
+  n = (n * 0x27d4eb2d) | 0;
+  n = n ^ (n >>> 15);
+  return (n >>> 0) / 4294967295;
+}
+
+/**
+ * Per-canvas cache of noise tiles, keyed by (scale, seed). Generating
+ * 128×128 ImageData is ~16 KB and ~5 ms; cached forever per ctx.
+ */
+const noiseTileCache = new WeakMap<CanvasRenderingContext2D, Map<string, CanvasPattern>>();
+
+function getNoisePattern(
+  ctx: CanvasRenderingContext2D,
+  scale: number,
+  seed: number,
+): CanvasPattern | null {
+  let perCtx = noiseTileCache.get(ctx);
+  if (!perCtx) {
+    perCtx = new Map();
+    noiseTileCache.set(ctx, perCtx);
+  }
+  const cacheKey = `${Math.round(scale * 100)}_${seed}`;
+  const cached = perCtx.get(cacheKey);
+  if (cached) return cached;
+
+  const TILE = 128;
+  // We need an offscreen canvas to build the pattern. ImageData → toCanvas
+  // is cheaper than per-pixel fillRect.
+  const off = document.createElement("canvas");
+  off.width = TILE;
+  off.height = TILE;
+  const octx = off.getContext("2d");
+  if (!octx) return null;
+  const img = octx.createImageData(TILE, TILE);
+  for (let i = 0; i < TILE * TILE; i++) {
+    // Hash by (i, seed) so different seeds produce uncorrelated tiles.
+    const v = hash32(i * 73856093 ^ seed * 19349663);
+    const g = Math.round(v * 255);
+    img.data[i * 4 + 0] = g;
+    img.data[i * 4 + 1] = g;
+    img.data[i * 4 + 2] = g;
+    img.data[i * 4 + 3] = 255;
+  }
+  octx.putImageData(img, 0, 0);
+  // If scale != 1, blit through a scaled canvas so the pattern grain
+  // matches the requested size when tiled by the destination ctx.
+  let source: HTMLCanvasElement = off;
+  if (scale !== 1) {
+    const dim = Math.max(8, Math.round(TILE * scale));
+    const scaled = document.createElement("canvas");
+    scaled.width = dim;
+    scaled.height = dim;
+    const sctx = scaled.getContext("2d");
+    if (sctx) {
+      sctx.imageSmoothingEnabled = false;
+      sctx.drawImage(off, 0, 0, dim, dim);
+      source = scaled;
+    }
+  }
+  const pattern = ctx.createPattern(source, "repeat");
+  if (pattern) perCtx.set(cacheKey, pattern);
+  return pattern;
+}
+
+function drawNoise(
+  ctx: CanvasRenderingContext2D,
+  prim: Extract<Primitive, { kind: "noise" }>,
+  state: ShapeState,
+) {
+  const x = evalNum(prim.x, state);
+  const y = evalNum(prim.y, state);
+  const w = evalNum(prim.w, state);
+  const h = evalNum(prim.h, state);
+  const scale = evalNum(prim.scale ?? 1, state);
+  const alpha = clampN(evalNum(prim.alpha ?? 0.15, state), 0, 1);
+  const seed = (prim.seed ?? 1337) | 0;
+  if (w <= 0 || h <= 0 || alpha <= 0) return;
+
+  const pattern = getNoisePattern(ctx, scale, seed);
+  if (!pattern) return;
+  ctx.save();
+  ctx.globalCompositeOperation = prim.blendMode ?? "multiply";
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = pattern;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+}
+
+function drawBrush(
+  ctx: CanvasRenderingContext2D,
+  prim: Extract<Primitive, { kind: "brush" }>,
+  palette: Record<string, string>,
+  state: ShapeState,
+) {
+  if (!Array.isArray(prim.points) || prim.points.length < 2) return;
+  const passes = Math.max(2, Math.min(prim.passes ?? 4, 8));
+  const jitter = evalNum(prim.jitter ?? 1.2, state);
+  const [wMin, wMax] = prim.widthRange ?? [0.6, 1.6];
+  const [aMin, aMax] = prim.alphaRange ?? [0.4, 0.95];
+  const seed = (prim.seed ?? 9001) | 0;
+
+  // Pre-evaluate path once.
+  const pts = prim.points.map((p) => ({ x: evalNum(p.x, state), y: evalNum(p.y, state) }));
+
+  const baseColor = resolveColor(ctx, prim.stroke, palette, state);
+  for (let pass = 0; pass < passes; pass++) {
+    const h1 = hash32(seed * 9176 + pass * 31);
+    const h2 = hash32(seed * 6151 + pass * 17);
+    const h3 = hash32(seed * 4099 + pass * 11);
+    const offsetMag = (h1 - 0.5) * 2 * jitter;
+    const widthPx = wMin + (wMax - wMin) * h2;
+    const passAlpha = aMin + (aMax - aMin) * h3;
+
+    ctx.save();
+    ctx.globalAlpha = passAlpha;
+    ctx.strokeStyle = baseColor;
+    ctx.lineWidth = widthPx;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      // Per-pass perpendicular offset, varying smoothly along the path.
+      const phase = hash32(seed * 7919 + i * 13 + pass * 113) - 0.5;
+      const off = offsetMag + phase * jitter * 0.6;
+      let nx = 0, ny = 0;
+      if (pts.length > 1) {
+        const prev = pts[Math.max(0, i - 1)];
+        const next = pts[Math.min(pts.length - 1, i + 1)];
+        const tx = next.x - prev.x, ty = next.y - prev.y;
+        const len = Math.hypot(tx, ty) || 1;
+        // Perpendicular (rotated 90°).
+        nx = -ty / len;
+        ny = tx / len;
+      }
+      const px = pts[i].x + nx * off;
+      const py = pts[i].y + ny * off;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    if (prim.closed) ctx.closePath();
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+/**
+ * Compute the axis-aligned bounding box of a primitive (only the closed
+ * shapes that support rim-light). Returns null if we can't derive one.
+ */
+function primBBox(
+  prim: Primitive,
+  state: ShapeState,
+): { x: number; y: number; w: number; h: number } | null {
+  switch (prim.kind) {
+    case "rect":
+    case "roundedRect":
+      return {
+        x: evalNum(prim.x, state),
+        y: evalNum(prim.y, state),
+        w: evalNum(prim.w, state),
+        h: evalNum(prim.h, state),
+      };
+    case "circle": {
+      const cx = evalNum(prim.cx, state);
+      const cy = evalNum(prim.cy, state);
+      const r = evalNum(prim.r, state);
+      return { x: cx - r, y: cy - r, w: r * 2, h: r * 2 };
+    }
+    case "ellipse": {
+      const cx = evalNum(prim.cx, state);
+      const cy = evalNum(prim.cy, state);
+      const rx = evalNum(prim.rx, state);
+      const ry = evalNum(prim.ry, state);
+      return { x: cx - rx, y: cy - ry, w: rx * 2, h: ry * 2 };
+    }
+    case "polygon": {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of prim.points) {
+        const x = evalNum(p.x, state), y = evalNum(p.y, state);
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+      if (!isFinite(minX)) return null;
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
+    default:
+      return null;
+  }
+}
+
+/** Trace the primitive's silhouette path into the current ctx. */
+function tracePrimPath(
+  ctx: CanvasRenderingContext2D,
+  prim: Primitive,
+  state: ShapeState,
+) {
+  ctx.beginPath();
+  switch (prim.kind) {
+    case "rect":
+      ctx.rect(evalNum(prim.x, state), evalNum(prim.y, state), evalNum(prim.w, state), evalNum(prim.h, state));
+      return;
+    case "roundedRect":
+      ctx.roundRect(
+        evalNum(prim.x, state),
+        evalNum(prim.y, state),
+        evalNum(prim.w, state),
+        evalNum(prim.h, state),
+        evalNum(prim.r, state),
+      );
+      return;
+    case "circle":
+      ctx.arc(evalNum(prim.cx, state), evalNum(prim.cy, state), evalNum(prim.r, state), 0, Math.PI * 2);
+      return;
+    case "ellipse":
+      ctx.ellipse(
+        evalNum(prim.cx, state),
+        evalNum(prim.cy, state),
+        evalNum(prim.rx, state),
+        evalNum(prim.ry, state),
+        evalNum(prim.rotation ?? 0, state),
+        0,
+        Math.PI * 2,
+      );
+      return;
+    case "polygon": {
+      prim.points.forEach((pt, i) => {
+        const x = evalNum(pt.x, state), y = evalNum(pt.y, state);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.closePath();
+      return;
+    }
+  }
+}
+
+function drawRimLight(
+  ctx: CanvasRenderingContext2D,
+  prim: Primitive,
+  rim: RimLightSpec,
+  state: ShapeState,
+) {
+  const bbox = primBBox(prim, state);
+  if (!bbox || bbox.w <= 0 || bbox.h <= 0) return;
+  const angle = evalNum(rim.fromAngle ?? -2.0944, state); // default upper-left
+  const width = evalNum(rim.width ?? 1.8, state);
+  const falloff = clampN(rim.falloff ?? 0.5, 0.05, 0.95);
+
+  // Build a linear gradient running across the bbox along `angle`.
+  // The light side gets the rim color; the dark side fades to fully transparent.
+  const cx = bbox.x + bbox.w / 2;
+  const cy = bbox.y + bbox.h / 2;
+  const reach = Math.max(bbox.w, bbox.h) * 0.6;
+  const x0 = cx + Math.cos(angle) * reach;
+  const y0 = cy + Math.sin(angle) * reach;
+  const x1 = cx - Math.cos(angle) * reach;
+  const y1 = cy - Math.sin(angle) * reach;
+  const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+  grad.addColorStop(0, rim.color);
+  grad.addColorStop(falloff, rim.color);
+  grad.addColorStop(Math.min(0.95, falloff + 0.25), withAlpha(rim.color, 0));
+  grad.addColorStop(1, withAlpha(rim.color, 0));
+
+  ctx.save();
+  tracePrimPath(ctx, prim, state);
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = width;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.stroke();
+  ctx.restore();
+}
+
+function withAlpha(color: string, alpha: number): string {
+  // For "rgba(r,g,b,a)" / "rgb(r,g,b)" / "#rrggbb" — produce an rgba with
+  // the requested alpha. Handles the cases our codebase actually emits.
+  const rgba = color.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (rgba) {
+    return `rgba(${rgba[1]}, ${rgba[2]}, ${rgba[3]}, ${alpha})`;
+  }
+  const hex = color.match(/^#([0-9a-f]{6})$/i);
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+  }
+  return color;
+}
+
+function clampN(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
 }

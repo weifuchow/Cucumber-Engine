@@ -56,6 +56,10 @@ export function getActiveSegment(project: Project): Segment {
 export function evaluateTimeline(project: Project, library: AssetLibrary, time: number): PreviewState {
   const chapter = project.chapters.find((item) => item.chapterId === project.preview.activeChapterId) ?? project.chapters[0];
   const segment = getActiveSegment(project);
+  // Apply frame-hold clamping FIRST so every state pulled below — characters,
+  // camera, viseme, head pose — sees the snapped time. Without this, lip-sync
+  // would still tick at 30 fps inside an "on twos" hold window.
+  time = applyFrameHold(segment.timeline, time);
   const sceneId = getLatestSceneId(segment.timeline, time, chapter.sceneId);
   const characterMap = new Map<string, CharacterRenderState>();
 
@@ -254,6 +258,7 @@ function evaluateCaption(events: TimelineEvent[], time: number) {
 function evaluateCamera(events: TimelineEvent[], characters: CharacterRenderState[], time: number) {
   const cameraEvents = events.filter((event): event is Extract<TimelineEvent, { type: "cameraChange" }> => event.type === "cameraChange");
   let previous = defaultCamera;
+  let jitterPx = 0;
 
   for (const event of cameraEvents) {
     const target = event.camera.target ? characters.find((character) => character.assetId === event.camera.target) : undefined;
@@ -267,17 +272,65 @@ function evaluateCamera(events: TimelineEvent[], characters: CharacterRenderStat
     if (time < event.time) break;
     if (event.camera.transition !== "cut" && event.camera.duration > 0 && time < event.time + event.camera.duration) {
       const progress = easeInOut((time - event.time) / event.camera.duration);
-      return {
-        x: lerp(previous.x, next.x, progress),
-        y: lerp(previous.y, next.y, progress),
-        zoom: lerp(previous.zoom, next.zoom, progress),
-        mode: next.mode,
-      };
+      // Hand-held jitter — picked up from whichever cameraChange is
+      // currently "active". Lerped during transitions so jitter level
+      // ramps in/out smoothly.
+      const prevJitter = jitterPx;
+      const nextJitter = event.camera.jitter ?? 0;
+      const activeJitter = lerp(prevJitter, nextJitter, progress);
+      return applyJitter(
+        {
+          x: lerp(previous.x, next.x, progress),
+          y: lerp(previous.y, next.y, progress),
+          zoom: lerp(previous.zoom, next.zoom, progress),
+          mode: next.mode,
+        },
+        activeJitter,
+        time,
+      );
     }
     previous = next;
+    jitterPx = event.camera.jitter ?? 0;
   }
 
-  return previous;
+  return applyJitter(previous, jitterPx, time);
+}
+
+/**
+ * Layer a small hand-held wobble onto the resolved camera. Two coupled
+ * sine waves (different frequency on x/y) read as "operator breath"
+ * rather than periodic shake. jitterPx caps the peak displacement.
+ */
+function applyJitter(
+  cam: { x: number; y: number; zoom: number; mode: string },
+  jitterPx: number,
+  time: number,
+): { x: number; y: number; zoom: number; mode: string } {
+  if (!jitterPx) return cam;
+  return {
+    ...cam,
+    x: cam.x + Math.sin(time * 7.3) * jitterPx + Math.sin(time * 3.1) * jitterPx * 0.35,
+    y: cam.y + Math.cos(time * 5.7) * jitterPx * 0.6 + Math.sin(time * 2.4) * jitterPx * 0.25,
+  };
+}
+
+/**
+ * Frame-hold clamp: if `time` falls inside a `frameHold` event window,
+ * snap to the nearest 1/fps step. This produces the "on twos / on threes"
+ * stutter without changing the actual playback rate. The animation loop
+ * still ticks at 30 fps; the engine just renders the same frame N times.
+ */
+export function applyFrameHold(events: TimelineEvent[], time: number): number {
+  for (const ev of events) {
+    if (ev.type !== "frameHold") continue;
+    if (time < ev.time) continue;
+    if (time > ev.time + ev.duration) continue;
+    const step = 1 / Math.max(ev.fps, 1);
+    const local = time - ev.time;
+    const clamped = Math.floor(local / step) * step;
+    return ev.time + clamped;
+  }
+  return time;
 }
 
 function getPositionBeforeMove(events: TimelineEvent[], target: string, time: number) {

@@ -267,6 +267,85 @@ The segment generator skill reads this and auto-emits `soundEffect` events whene
 
 Values must be `sfx_*` or `soundEffect_*` assetIds resolvable in the asset library.
 
+## Painterly primitives — escape the Flash look
+
+Four engine features that collectively shift the read from "SVG / Flash MX" toward "painterly cel animation". All optional; AI generators should use them on every character / scene unless the user explicitly asked for a flat / minimalist style.
+
+### `kind: "noise"` — paper grain / film grain overlay
+
+A tiled noise pattern alpha-blended over an area. Single biggest contributor to escaping the Flash look.
+
+```json
+{
+  "kind": "noise",
+  "x": -200, "y": 0, "w": 1680, "h": 720,
+  "scale": 0.9, "alpha": 0.13,
+  "blendMode": "multiply", "seed": 4242
+}
+```
+
+Typical placement: one noise rect covering the full canvas of a SCENE's background layer at `alpha 0.10–0.18`. For warmer "watercolor paper" feel use `blendMode: "soft-light"`; for darker "newsprint" feel use `"multiply"`. The renderer caches the tile per CanvasRenderingContext2D, so repeated draws are free. `seed` freezes the pattern so it doesn't shimmer between frames.
+
+### `kind: "brush"` — hand-drawn stroke
+
+Replaces `polygon stroke` for hair locks, scars, accent lines. Multi-pass with width/alpha/jitter variation per stroke.
+
+```json
+{
+  "kind": "brush",
+  "points": [{"x": -8, "y": -240}, {"x": 0, "y": -250}, {"x": 8, "y": -240}, {"x": 0, "y": -234}],
+  "stroke": "#1a1612",
+  "closed": true,
+  "passes": 4,
+  "jitter": 1.1,
+  "widthRange": [0.8, 2.4],
+  "alphaRange": [0.55, 0.95],
+  "seed": 211
+}
+```
+
+Use on: hair tufts, character outlines that need "marker" feel, eyebrows, scars. **Don't** use on: precise silhouettes (head circle, torso rect) — those should stay clean.
+
+### `rimLight` modifier on closed shapes
+
+Optional field on `rect / roundedRect / circle / ellipse / polygon`. Draws a soft directional highlight along the silhouette edge, separating the shape from its background.
+
+```json
+{
+  "kind": "polygon", "points": [...],
+  "fill": {"palette": "body"},
+  "stroke": "rgba(26,22,18,0.85)", "lineWidth": 1.6,
+  "rimLight": { "color": "rgba(255,232,180,0.72)", "fromAngle": -2.1, "width": 2.2, "falloff": 0.45 }
+}
+```
+
+Use on: character body / cape silhouette (warm rim from upper-left if the implied sun is upper-left), tree crowns in mid-distance (cool sky bounce rim), prop highlights.
+
+`fromAngle` in radians; `-2.1` ≈ upper-left, `-PI/2` = directly above, `0` = screen-right. `falloff` 0..1; 0.3 = sharp rim, 0.7 = soft wrap.
+
+### `blurPx` on `transform` — depth of field
+
+Wrap a sub-tree in a transform with `blurPx`:
+
+```json
+{ "kind": "transform", "blurPx": 1.4, "children": [ ...background trees... ] }
+```
+
+Apply 1–2 px blur to background layer + 0.5 px to foreground occluder. Brings mid-ground character into focus — instant DoF read.
+
+### Project-level grade (postFX)
+
+`project.config.postFX` controls the global LUT applied to every frame by PreviewCanvas:
+
+```json
+"postFX": {
+  "saturate": 0.94, "contrast": 1.06,
+  "sepia": 0.03, "vignette": 0.28, "noiseAlpha": 0.07
+}
+```
+
+The defaults shown above are applied automatically when `postFX` is undefined — they give a tasteful painterly grade without configuration. Set `"enabled": false` to disable for authoring/debug.
+
 ## Particles primitive
 
 The shape DSL now includes `kind: "particles"` for emitting up to 500 deterministic particles in one declaration. Use it for fire, snow, sparkles, debris, blossoms.

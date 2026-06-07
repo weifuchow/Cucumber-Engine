@@ -78,7 +78,12 @@ type VisemeFrame = { time: number; viseme: Viseme; token?: string };
 
 type TimelineEvent =
   | { time, type: "sceneChange", sceneId }
-  | { time, type: "cameraChange", camera: { mode, target?, x?, y?, zoom, duration, transition } }
+  | { time, type: "cameraChange",
+      camera: { mode, target?, x?, y?, zoom, duration, transition,
+                jitter? /* px peak displacement; 0.6–1.2 for handheld pan, 0 = locked tripod */ } }
+  | { time, type: "frameHold",
+      fps      /* 6 = anticipation hold, 10 = impact stutter, 12 = cel "on twos" */,
+      duration /* seconds — typically 0.3–0.6 around an impact beat */ }
   | { time, type: "characterAppear", target, position: { x, y, z?, angle? }, expression?, scale? }
   | { time, type: "characterDisappear", target }
   | { time, type: "characterMove", target, to: { x, y, z?, angle? }, duration }
