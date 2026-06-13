@@ -5,23 +5,33 @@
 // per-slot color), skins (the actual attachments — region rects /
 // meshes / paths), and animations (timelines of per-bone keyframes).
 //
-// We don't aim for animation parity — Spine's bone-skinning / mesh-deform
-// is far richer than our procedural-shape DSL. Instead we map the
-// authoring intent:
+// We don't aim for full animation parity, but we DO reproduce the two
+// pieces that matter most for escaping the "stack of rotating boxes" look:
 //
-//   - default skin → procedural shape primitives (rect / polygon / circle)
-//     positioned at each bone's world rest transform
+//   - region attachments → procedural rect primitives wrapped in a bone
+//     transform (rigid, animated via keyframe expressions)
+//   - mesh attachments  → `skinnedMesh` primitives that carry a compact
+//     bone-weighted vertex set, so they genuinely DEFORM under animation
+//     (Σ weight · boneWorld · vertex) instead of moving rigidly
 //   - each animation name → an entry in metadata.actions (so the timeline
 //     editor and AssetPreviewStage show them as switchable poses)
-//   - skin/slot colors → palette entries
+//   - per-bone keyframes  → metadata.spineAnimations, evaluated per frame
+//   - skin/slot colors    → palette entries
 //
-// What we deliberately drop: per-frame keyframe interpolation, mesh
-// vertex deformation, IK constraints, path constraints, physics. Those
-// would need a full Spine runtime port — out of scope for an MVP importer.
+// What we still drop: IK / path / physics constraints, attachment swapping,
+// clipping attachments, and texture-mapped mesh fills (meshes render with a
+// flat slot tint until an atlas loader lands). Those need a fuller runtime.
 //
 // Spec reference (Spine 4.x JSON): http://esotericsoftware.com/spine-json-format
 
-import type { ConditionalPrimitive, Primitive, ProceduralShape } from "../engine/proceduralShape";
+import type {
+  ConditionalPrimitive,
+  Primitive,
+  ProceduralShape,
+  SkinnedBone,
+  SkinnedVertex,
+  SkinnedVertexBinding,
+} from "../engine/proceduralShape";
 import type { SpineAnimation, SpineAnimationMap, SpineBoneKeyframes, SpineColorKey, SpineRotateKey, SpineSlotKeyframes, SpineVecKey } from "../engine/spineKeyframes";
 import { sanitize as sanitizeBoneName } from "../engine/spineKeyframes";
 import type { AssetManifest, AssetScope } from "../types/schema";
@@ -59,7 +69,12 @@ interface SpineRegionAttachment {
 
 interface SpineMeshAttachment {
   type: "mesh";
-  vertices?: number[];           // flat [x0, y0, x1, y1, …]
+  // Either non-weighted (flat [x0, y0, x1, y1, …], length === uvs.length)
+  // or weighted (variable-length: per vertex `n, b, x, y, w, …`).
+  vertices?: number[];
+  uvs?: number[];                // present ⇒ length tells us the vertex count
+  triangles?: number[];          // index triples (kept for future texturing)
+  hull?: number;                 // # of perimeter (outline) vertices, first in the list
   width?: number;
   height?: number;
   color?: string;
@@ -116,8 +131,9 @@ export function spineJsonToManifest(
   const height = json.skeleton?.height ?? 520;
 
   // 1. Resolve world rest transforms for every bone.
+  const boneList = json.bones ?? [];
   const boneMap = new Map<string, SpineBone>();
-  for (const b of json.bones ?? []) boneMap.set(b.name, b);
+  for (const b of boneList) boneMap.set(b.name, b);
   const worldTransforms = new Map<string, BoneTransform>();
   function resolve(name: string): BoneTransform {
     const cached = worldTransforms.get(name);
@@ -203,18 +219,24 @@ export function spineJsonToManifest(
         }],
       });
     } else if (isMesh(attachment) && Array.isArray(attachment.vertices) && attachment.vertices.length >= 6) {
-      // Build a flat polygon from the vertex pairs (drop bone weights — we
-      // just use rest positions).
-      const points: Array<{ x: number; y: number }> = [];
-      const verts = attachment.vertices;
-      for (let i = 0; i < verts.length; i += 2) {
-        const vx = verts[i];
-        const vy = verts[i + 1];
-        if (typeof vx !== "number" || typeof vy !== "number") break;
-        points.push({ x: bone.worldX + vx, y: flipY(bone.worldY + vy) });
-      }
-      if (points.length >= 3) {
-        primitives.push({ kind: "polygon", points, fill: { palette: paletteKey }, stroke: "rgba(0,0,0,0.55)", lineWidth: 1.4 });
+      // Preferred path: a genuine bone-weighted skinned mesh that deforms
+      // under animation. Falls back to a static rest-pose polygon only when
+      // the mesh can't be skinned (e.g. references no resolvable bones).
+      const mesh = buildSkinnedMesh(attachment, slot.bone, boneList, boneMap, paletteKey);
+      if (mesh) {
+        primitives.push(mesh);
+      } else {
+        const points: Array<{ x: number; y: number }> = [];
+        const verts = attachment.vertices;
+        for (let i = 0; i < verts.length; i += 2) {
+          const vx = verts[i];
+          const vy = verts[i + 1];
+          if (typeof vx !== "number" || typeof vy !== "number") break;
+          points.push({ x: bone.worldX + vx, y: flipY(bone.worldY + vy) });
+        }
+        if (points.length >= 3) {
+          primitives.push({ kind: "polygon", points, fill: { palette: paletteKey }, stroke: "rgba(0,0,0,0.55)", lineWidth: 1.4 });
+        }
       }
     }
   }
@@ -353,6 +375,121 @@ function normalizeSkins(skins: SpineJson["skins"]): Map<string, Record<string, R
     for (const [name, attachments] of Object.entries(skins)) {
       out.set(name, attachments as Record<string, Record<string, SpineAttachment>>);
     }
+  }
+  return out;
+}
+
+/**
+ * Convert a Spine mesh attachment into a `skinnedMesh` primitive that
+ * deforms under animation. Handles both vertex encodings:
+ *
+ *   - non-weighted: `vertices` is a flat [x0,y0,…] in the slot bone's local
+ *     space (detected when `vertices.length === uvs.length`). Each vertex is
+ *     rigidly bound to the slot bone with weight 1.
+ *   - weighted: `vertices` is the variable-length form
+ *     `n, boneIndex, x, y, w, …` where boneIndex indexes the skeleton's
+ *     bone array. Each vertex carries its real per-bone weights.
+ *
+ * The referenced bones plus their ancestors are embedded as a compact
+ * rest-pose mini-skeleton so the renderer is self-contained. Returns null
+ * when the mesh has too few vertices or no resolvable bones.
+ */
+function buildSkinnedMesh(
+  attachment: SpineMeshAttachment,
+  slotBoneRaw: string,
+  boneList: SpineBone[],
+  boneMap: Map<string, SpineBone>,
+  paletteKey: string,
+): Extract<Primitive, { kind: "skinnedMesh" }> | null {
+  const raw = attachment.vertices;
+  if (!Array.isArray(raw) || raw.length < 6) return null;
+  const uvs = attachment.uvs;
+  const weighted = !(Array.isArray(uvs) && uvs.length === raw.length);
+
+  const vertices: SkinnedVertex[] = [];
+  const referenced = new Set<string>();
+
+  if (!weighted) {
+    const slotSafe = sanitizeBoneName(slotBoneRaw);
+    referenced.add(slotBoneRaw);
+    for (let i = 0; i + 1 < raw.length; i += 2) {
+      vertices.push([{ bone: slotSafe, x: raw[i], y: raw[i + 1], weight: 1 }]);
+    }
+  } else {
+    let i = 0;
+    while (i < raw.length) {
+      const n = raw[i++] | 0;
+      if (n <= 0 || i + n * 4 > raw.length) break;
+      const bindings: SkinnedVertexBinding[] = [];
+      for (let k = 0; k < n; k++) {
+        const boneIndex = raw[i++] | 0;
+        const vx = raw[i++];
+        const vy = raw[i++];
+        const w = raw[i++];
+        const bone = boneList[boneIndex];
+        if (!bone) continue;
+        referenced.add(bone.name);
+        bindings.push({ bone: sanitizeBoneName(bone.name), x: vx, y: vy, weight: w });
+      }
+      if (bindings.length) vertices.push(bindings);
+    }
+  }
+
+  if (vertices.length < 3) return null;
+  const bones = collectSkinnedBones(referenced, boneMap);
+  if (!bones.length) return null;
+
+  const mesh: Extract<Primitive, { kind: "skinnedMesh" }> = {
+    kind: "skinnedMesh",
+    bones,
+    vertices,
+    fill: { palette: paletteKey },
+    stroke: "rgba(0,0,0,0.5)",
+    lineWidth: 1.2,
+  };
+  if (Array.isArray(attachment.triangles) && attachment.triangles.length) {
+    mesh.triangles = attachment.triangles.map((t) => t | 0);
+  }
+  if (typeof attachment.hull === "number" && attachment.hull >= 3) {
+    mesh.hull = attachment.hull | 0;
+  }
+  return mesh;
+}
+
+/**
+ * Expand a set of referenced bone names into a self-contained rest-pose
+ * mini-skeleton: every referenced bone plus its full ancestor chain, with
+ * names sanitized so they line up with the `bone_<name>_*` animation state
+ * keys. A bone's `parent` is kept only if the parent is also in the set.
+ */
+function collectSkinnedBones(
+  referencedRawNames: Set<string>,
+  boneMap: Map<string, SpineBone>,
+): SkinnedBone[] {
+  const needed = new Map<string, SpineBone>(); // raw name → bone
+  function addWithAncestors(raw: string) {
+    let cur: string | undefined = raw;
+    let guard = 0;
+    while (cur && !needed.has(cur) && guard++ < 64) {
+      const b = boneMap.get(cur);
+      if (!b) break;
+      needed.set(cur, b);
+      cur = b.parent;
+    }
+  }
+  for (const r of referencedRawNames) addWithAncestors(r);
+
+  const out: SkinnedBone[] = [];
+  for (const b of needed.values()) {
+    out.push({
+      name: sanitizeBoneName(b.name),
+      parent: b.parent && needed.has(b.parent) ? sanitizeBoneName(b.parent) : undefined,
+      x: b.x ?? 0,
+      y: b.y ?? 0,
+      rotation: b.rotation ?? 0,
+      scaleX: b.scaleX ?? 1,
+      scaleY: b.scaleY ?? 1,
+    });
   }
   return out;
 }

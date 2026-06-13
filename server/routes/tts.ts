@@ -49,7 +49,15 @@ ttsRoute.get("/audio/:filename", async (c) => {
 
   const row = getTtsAudio(hash);
   if (row) {
-    return new Response(row.audio, {
+    // `row.audio` is a Node Buffer (backed by a real ArrayBuffer at runtime);
+    // wrap it in a plain Uint8Array view so it satisfies the (DOM) BodyInit
+    // type without copying the bytes.
+    const body = new Uint8Array(
+      row.audio.buffer as ArrayBuffer,
+      row.audio.byteOffset,
+      row.audio.byteLength,
+    );
+    return new Response(body, {
       headers: {
         "Content-Type": row.mime,
         "Content-Length": String(row.sizeBytes),

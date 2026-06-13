@@ -1,7 +1,12 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    // DOM is included for *type resolution only*: db/seed.ts pulls in the
+    // shared src/data/* asset modules, which transitively import the
+    // Canvas2D engine (proceduralShape.ts). Those DOM types appear solely in
+    // never-called function signatures on the server; adding the lib keeps
+    // this typecheck pass honest without affecting the Node runtime.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "esModuleInterop": true,

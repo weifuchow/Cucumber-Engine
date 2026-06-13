@@ -77,6 +77,41 @@ export interface RimLightSpec {
   falloff?: number;
 }
 
+/**
+ * One bone of a `skinnedMesh`'s self-contained mini-skeleton. Holds the
+ * REST-pose *local* transform (relative to `parent`); the renderer composes
+ * the animated world transform per frame by walking the parent chain and
+ * adding the `bone_<name>_*` animation deltas from shape state.
+ *
+ * `name` / `parent` are pre-sanitized (snake_case) so they match the state
+ * keys emitted by `evaluateSpineBones`. The root bone omits `parent`.
+ */
+export interface SkinnedBone {
+  name: string;
+  parent?: string;
+  x: number;
+  y: number;
+  rotation: number; // degrees, Spine convention
+  scaleX: number;
+  scaleY: number;
+}
+
+/**
+ * One weighted bone binding of a mesh vertex. `(x, y)` is the vertex
+ * position expressed in `bone`'s LOCAL space (Spine space, Y-up); `weight`
+ * is the blend weight. A rigid (non-weighted) vertex is a single binding
+ * with `weight: 1`.
+ */
+export interface SkinnedVertexBinding {
+  bone: string;
+  x: number;
+  y: number;
+  weight: number;
+}
+
+/** A mesh vertex = one or more weighted bone bindings (their weights sum ~1). */
+export type SkinnedVertex = SkinnedVertexBinding[];
+
 export type Primitive =
   | { kind: "roundedRect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr; r: NumExpr; fill?: ColorSpec; stroke?: ColorSpec; lineWidth?: NumExpr; shadow?: ShadowSpec; rimLight?: RimLightSpec }
   | { kind: "rect"; x: NumExpr; y: NumExpr; w: NumExpr; h: NumExpr; fill?: ColorSpec; stroke?: ColorSpec; lineWidth?: NumExpr; shadow?: ShadowSpec; rimLight?: RimLightSpec }
@@ -269,6 +304,41 @@ export type Primitive =
       widthRange?: [number, number];
       alphaRange?: [number, number];
       seed?: number;
+    }
+  | {
+      /**
+       * Weighted skeletal mesh — the genuine Spine "mesh deform". Each vertex
+       * is bound to one or more bones in `bones`; at draw time the renderer
+       * computes every bone's animated world transform from the
+       * `bone_<name>_rotate / _x / _y / _scale_x / _scale_y` state keys
+       * (injected by `evaluateSpineBones`) and skins each vertex:
+       *
+       *   world(v) = Σ_i  weight_i · boneWorld_i · (v.x_i, v.y_i)
+       *
+       * so rotating a bone bends the mesh through it instead of sliding a
+       * rigid rectangle. This is what lifts an imported Spine character off
+       * the "stack of rotating boxes" Flash read that the region-attachment
+       * path produces.
+       *
+       * Coordinates are authored in Spine space (Y-up); the renderer flips Y
+       * once when it emits the final canvas path, matching `spineImporter`.
+       *
+       * `bones` is self-contained: every bone referenced by a vertex plus its
+       * ancestors, each with its rest-pose local transform. Outline = the
+       * first `hull` vertices (Spine convention) when provided, else all
+       * vertices in order. `triangles` is retained for future texture mapping
+       * but flat-color meshes render via the hull fill.
+       */
+      kind: "skinnedMesh";
+      bones: SkinnedBone[];
+      vertices: SkinnedVertex[];
+      triangles?: number[];
+      hull?: number;
+      fill?: ColorSpec;
+      stroke?: ColorSpec;
+      lineWidth?: NumExpr;
+      shadow?: ShadowSpec;
+      rimLight?: RimLightSpec;
     };
 
 export type ClipShape =
@@ -590,6 +660,10 @@ function drawPrimitive(
     }
     case "brush": {
       drawBrush(ctx, prim, palette, state);
+      return;
+    }
+    case "skinnedMesh": {
+      drawSkinnedMesh(ctx, prim, palette, state);
       return;
     }
     case "clip": {
@@ -1054,6 +1128,106 @@ function drawBrush(
     ctx.stroke();
     ctx.restore();
   }
+}
+
+// =====================================================================
+// SKINNED MESH — weighted bone deformation (real Spine mesh deform)
+// =====================================================================
+
+/** 2D affine transform [[a, c, tx], [b, d, ty]]. */
+interface Affine { a: number; b: number; c: number; d: number; tx: number; ty: number }
+
+const IDENTITY_AFFINE: Affine = { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 };
+
+function numState(state: ShapeState, key: string, fallback: number): number {
+  const v = state[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+/**
+ * Compose each bone's animated world transform: rest-pose local transform
+ * combined with the per-frame animation deltas in `state`, walked up the
+ * parent chain. Returns sanitized-name → world affine (Spine space, Y-up).
+ * Memoized + depth-guarded so a malformed cyclic skeleton can't hang.
+ */
+function computeSkinnedBoneWorlds(bones: SkinnedBone[], state: ShapeState): Map<string, Affine> {
+  const byName = new Map<string, SkinnedBone>();
+  for (const b of bones) byName.set(b.name, b);
+  const worlds = new Map<string, Affine>();
+
+  function resolve(name: string, guard: number): Affine {
+    const cached = worlds.get(name);
+    if (cached) return cached;
+    const bone = byName.get(name);
+    if (!bone || guard > 64) return IDENTITY_AFFINE;
+    const parent =
+      bone.parent && bone.parent !== name ? resolve(bone.parent, guard + 1) : IDENTITY_AFFINE;
+
+    // Animated local transform = rest pose + animation deltas.
+    const rot = (bone.rotation + numState(state, `bone_${name}_rotate`, 0)) * (Math.PI / 180);
+    const tx = bone.x + numState(state, `bone_${name}_x`, 0);
+    const ty = bone.y + numState(state, `bone_${name}_y`, 0);
+    const sx = bone.scaleX * numState(state, `bone_${name}_scale_x`, 1);
+    const sy = bone.scaleY * numState(state, `bone_${name}_scale_y`, 1);
+    const cos = Math.cos(rot), sin = Math.sin(rot);
+    const la = cos * sx, lb = sin * sx, lc = -sin * sy, ld = cos * sy;
+
+    // world = parent ∘ local
+    const w: Affine = {
+      a: parent.a * la + parent.c * lb,
+      b: parent.b * la + parent.d * lb,
+      c: parent.a * lc + parent.c * ld,
+      d: parent.b * lc + parent.d * ld,
+      tx: parent.a * tx + parent.c * ty + parent.tx,
+      ty: parent.b * tx + parent.d * ty + parent.ty,
+    };
+    worlds.set(name, w);
+    return w;
+  }
+
+  for (const b of bones) resolve(b.name, 0);
+  return worlds;
+}
+
+function drawSkinnedMesh(
+  ctx: CanvasRenderingContext2D,
+  prim: Extract<Primitive, { kind: "skinnedMesh" }>,
+  palette: Record<string, string>,
+  state: ShapeState,
+) {
+  if (!Array.isArray(prim.vertices) || prim.vertices.length < 3) return;
+  const worlds = computeSkinnedBoneWorlds(prim.bones ?? [], state);
+
+  // Skin every vertex into canvas space (flip Y once at the end).
+  const pts: Array<{ x: number; y: number }> = new Array(prim.vertices.length);
+  for (let i = 0; i < prim.vertices.length; i++) {
+    const bindings = prim.vertices[i];
+    let wx = 0, wy = 0, wsum = 0;
+    for (const bind of bindings) {
+      const m = worlds.get(bind.bone) ?? IDENTITY_AFFINE;
+      wx += (m.a * bind.x + m.c * bind.y + m.tx) * bind.weight;
+      wy += (m.b * bind.x + m.d * bind.y + m.ty) * bind.weight;
+      wsum += bind.weight;
+    }
+    if (wsum > 1e-6) { wx /= wsum; wy /= wsum; }
+    pts[i] = { x: wx, y: -wy }; // Spine Y-up → canvas Y-down
+  }
+
+  // Outline = the hull (perimeter) vertices when declared, else the whole ring.
+  const hullCount =
+    prim.hull && prim.hull >= 3 && prim.hull <= pts.length ? prim.hull : pts.length;
+
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < hullCount; i++) {
+    const p = pts[i];
+    if (!isFinite(p.x) || !isFinite(p.y)) continue;
+    if (!started) { ctx.moveTo(p.x, p.y); started = true; }
+    else ctx.lineTo(p.x, p.y);
+  }
+  if (!started) return;
+  ctx.closePath();
+  strokeFill(ctx, prim, palette, state);
 }
 
 /**

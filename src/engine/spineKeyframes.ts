@@ -18,9 +18,14 @@
 // approximated as linear — visible difference is small for the typical
 // 12-fps Spine timelines that漫剧 imports use.
 //
-// What we deliberately don't implement: per-slot color animation,
-// attachment swapping, mesh vertex weights, IK constraint timelines,
-// physics constraints. Those need a full Spine runtime.
+// The per-bone pose this evaluator produces ALSO drives mesh deformation:
+// `skinnedMesh` primitives (emitted by spineImporter for Spine mesh
+// attachments) read the same `bone_<name>_*` keys to skin their weighted
+// vertices, so an animation bends meshes through their bones, not just the
+// rigid region rectangles.
+//
+// What we deliberately don't implement: attachment swapping, IK constraint
+// timelines, path/physics constraints. Those need a fuller Spine runtime.
 
 import type { ShapeState } from "./proceduralShape";
 

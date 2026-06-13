@@ -1,7 +1,7 @@
 import { db } from "../db/index.js";
 import { randomUUID } from "node:crypto";
 
-export type AiJobKind = "asset.generate" | "segment.generate" | "skill.run";
+export type AiJobKind = "asset.generate" | "segment.generate" | "skill.run" | "import.plan";
 export type AiJobStatus = "running" | "done" | "error";
 
 export interface AiJob {
