@@ -30,6 +30,7 @@ Without a key the server falls back to a silent-WAV mock TTS provider so the lip
 | **Generate dialogue audio via Alibaba CosyVoice** | TTS panel on any `dialogue` event OR batch button on segment view |
 | **Auto lip-sync from text** | Pinyin → 7-viseme mapper feeds the mouth shape state at draw time |
 | **Drive characters from Spine JSON keyframes** | Importer parses bones + animations[] with cubic-bezier curves + slot color animation |
+| **Real Spine mesh deform** | Mesh attachments import as `skinnedMesh` — bone-weighted vertices skin per frame (Σ weight·boneWorld·vertex), not rigid boxes |
 | **Multi-pass per-limb occlusion** | `metadata.bodyPartLayers: { behind, main, front }` — A's arm can pass behind B's torso |
 | **Camera handheld jitter + frame-hold stutter** | `camera.jitter` + `frameHold { fps, duration }` events |
 | **Paper-grain + rim light + post-FX color grade** | `noise` / `brush` primitives + `rimLight` modifier + auto `postFX` LUT |
@@ -168,13 +169,14 @@ Lip sync: Chinese text → pinyin (~600-char hand-curated table) → 7 visemes (
 
 ## AI skills
 
-Five skills in `.claude/skills/`:
+Skills in `.claude/skills/`:
 
 | Skill | Trigger |
 |---|---|
 | **cucumber-asset-generator** | "AI 生成资产" button — designs a single AssetManifest with 2.5D + LX-* rules baked in |
 | **cucumber-segment-generator** | "AI 生成片段" button — designs Chapter + Segment + missing assets from a script |
 | **cucumber-spine-fetcher** | Fetches public Spine examples from URLs / GitHub raw + auto-converts |
+| **cucumber-3d-fetcher** | Fetches / image→3D a character model and stages it (skeleton; Path C of [docs/3d-pipeline.md](docs/3d-pipeline.md)) |
 | **(referenced) cucumber-asset-generator references/procedural-shape.md** | Full primitive recipe library AI consults during generation |
 
 All skills emit JSON for UI preview; the frontend (not the skill) decides what enters the DB.
@@ -243,4 +245,4 @@ See [docs/capability-roadmap.md](docs/capability-roadmap.md) for the full table 
 | [scripts/build-character-shape.ts](scripts/build-character-shape.ts) | CLI: spec → shape/manifest/bundle (4-view) |
 | [scripts/seed-luoxiaohei-demo.py](scripts/seed-luoxiaohei-demo.py) | The 罗小黑 demo project seed |
 | [scripts/lint-2_5d.ts](scripts/lint-2_5d.ts) | Asset + segment lint + LX-* style-bar rules |
-| [docs/](docs/) | 2.5d-plan · capability-roadmap · acceptance-luoxiaohei |
+| [docs/](docs/) | 2.5d-plan · capability-roadmap · acceptance-luoxiaohei · 3d-pipeline |
