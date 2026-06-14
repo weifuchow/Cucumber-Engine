@@ -157,7 +157,13 @@ function renderEffect(asset: AssetManifest, out: string) {
   save(canvas, out);
 }
 
-function renderFilmstrip(projectPath: string, out: string) {
+const YAW: Record<string, number> = {
+  front: 0, back: Math.PI,
+  sideRight: 1.45, sideLeft: -1.45,
+  threeQuarterRight: 0.7, threeQuarterLeft: -0.7,
+};
+
+async function renderFilmstrip(projectPath: string, out: string) {
   const project = load<Parameters<typeof evaluateTimeline>[0]>(projectPath);
   const libPath = arg("library");
   const library = libPath ? load<Parameters<typeof evaluateTimeline>[1]>(libPath) : ({ globalAssets: [], projectAssets: [], scenes: [] } as never);
@@ -176,6 +182,13 @@ function renderFilmstrip(projectPath: string, out: string) {
   const fw = big ? 640 : 320, fh = big ? 360 : 180;
   const canvas = createCanvas(fw * cols, fh * rows);
   const ctx = canvas.getContext("2d") as unknown as Ctx;
+
+  // Load the 3D renderer only if some character carries a model3d spec.
+  const wants3D = [...assetsById.values()].some((a) => (a.metadata as { model3d?: unknown }).model3d);
+  let render3D: undefined | ((o: { spec: unknown; yaw: number; action: string; time: number; W: number; H: number; rim: string }) => { width: number; height: number });
+  if (wants3D) {
+    ({ renderCharacter3D: render3D } = (await import("./lib/character3d.mjs")) as never);
+  }
 
   for (let i = 0; i < n; i++) {
     const t = explicitTimes ? explicitTimes[i] : (dur * i) / Math.max(n - 1, 1);
@@ -197,10 +210,24 @@ function renderFilmstrip(projectPath: string, out: string) {
     for (const ch of st.characters) {
       const a = assetsById.get(ch.assetId);
       if (!a) continue;
-      drawCharacter(ctx as never, a, {
-        x: ch.x, y: ch.y, scale: ch.scale, expression: ch.expression, action: ch.action ?? "idle",
-        time: t, angle: ch.angle, viseme: ch.viseme, z: ch.z, headYaw: ch.headYaw, headPitch: ch.headPitch,
-      });
+      const m3d = (a.metadata as { model3d?: { spec: unknown; rim: string } }).model3d;
+      let drew3D = false;
+      if (m3d && render3D) {
+        try {
+          // genuine 3D: render the posable cel-shaded humanoid at this facing/pose
+          const RW = 360, RH = 620;
+          const im = render3D({ spec: m3d.spec, yaw: YAW[ch.angle] ?? 0, action: ch.action ?? "idle", time: t, W: RW, H: RH, rim: m3d.rim });
+          const s = (610 * ch.scale) / RH;
+          ctx.drawImage(im as unknown as CanvasImageSource, ch.x - (RW * s) / 2, ch.y - RH * s + 14 * ch.scale, RW * s, RH * s);
+          drew3D = true;
+        } catch { /* no GL (not under xvfb) → fall back to 2D below */ }
+      }
+      if (!drew3D) {
+        drawCharacter(ctx as never, a, {
+          x: ch.x, y: ch.y, scale: ch.scale, expression: ch.expression, action: ch.action ?? "idle",
+          time: t, angle: ch.angle, viseme: ch.viseme, z: ch.z, headYaw: ch.headYaw, headPitch: ch.headPitch,
+        });
+      }
     }
     // effects (drawn over characters, at their world position)
     for (const fx of st.effects) {
@@ -228,7 +255,7 @@ async function main() {
       const lib = load<{ globalAssets?: AssetManifest[]; projectAssets?: AssetManifest[] }>(libPath);
       await preloadSprites([...(lib.globalAssets ?? []), ...(lib.projectAssets ?? [])]);
     }
-    renderFilmstrip(arg("project")!, out);
+    await renderFilmstrip(arg("project")!, out);
     return;
   }
   const asset = load<AssetManifest>(arg("file")!);

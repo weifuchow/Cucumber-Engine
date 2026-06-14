@@ -169,8 +169,20 @@ image(s) ──▶ mesh (Tripo/Hunyuan3D, multi-view input for accurate backs)
 3. `cucumber-3d-fetcher` skill wired to a real image→3D provider + the bake
    script (Path C content side). Skeleton landed; see
    `.claude/skills/cucumber-3d-fetcher/`.
-4. WebGL hybrid layer for live glTF (Path A) — only after C ships and we have
-   a hero character that demands free camera.
+4. WebGL hybrid layer for live glTF (Path A). ✅ **Proven**: `scripts/lib/
+   character3d.mjs` renders a posable cel-shaded humanoid via three.js
+   (WebGL1Renderer) on headless-gl under xvfb, composited per-timeline-frame
+   into the 2D scene by `qc-render.ts` (a character with `metadata.model3d`
+   renders as real 3D — depth, yaw-from-angle, articulated limbs — instead of a
+   billboard). Same three.js scene graph drives a browser WebGL canvas in-app.
+   Remaining: load real rigged glTF models (needs an image→3D source / asset);
+   wire the WebGL layer into the React PreviewCanvas.
+
+### Headless 3D notes
+- three.js must be a WebGL1-capable build (`three@0.149`, `WebGL1Renderer`) —
+  headless-gl exposes only WebGL1, and newer three calls `texImage3D` at init.
+- Run under `xvfb-run` (headless-gl needs an X display); read back via
+  `gl.readPixels` → napi canvas. qc-render falls back to 2D if no GL context.
 
 Until step 2 lands, the `cucumber-3d-fetcher` skill can fetch + validate +
 stage a model and emit a *pending-bake* manifest, but the asset is not

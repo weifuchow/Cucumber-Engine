@@ -65,6 +65,11 @@ async function viewShape(char, stand, actionFile) {
   ] };
 }
 
+const MODEL3D = {
+  iori:   { spec: { coat: "#7a1622", skin: "#e7b892", hair: "#c8202a", pants: "#1a1620", shoe: "#0e0c12", spikes: 9 }, rim: "#b076ff" },
+  orochi: { spec: { coat: "#bd9476", skin: "#e6cdb8", hair: "#dfe3ee", pants: "#cfd0db", shoe: "#5e4c3e", spikes: 0 }, rim: "#7cf2c0" },
+};
+
 async function buildManifest(char, baseId, name, display, faces /* 'R' | 'L' */) {
   const f = faces;
   const shapes = {
@@ -89,6 +94,9 @@ async function buildManifest(char, baseId, name, display, faces /* 'R' | 'L' */)
       references: [{ sourceType: "user-upload", source: `${char}_sheet_ref.png`, note: "official-style KOF turnaround art provided by user; cut + keyed into imageSprite frames" }],
       shape: shapes.front,
       shapes,
+      // 3D asset spec — a posable cel-shaded humanoid (real depth/rotation).
+      // The renderer prefers this over the 2D imageSprite shapes when present.
+      model3d: MODEL3D[char],
     },
     license: { type: "user-provided", author: "user upload", sourceUrl: "", commercialUse: false, needAttribution: true },
   };

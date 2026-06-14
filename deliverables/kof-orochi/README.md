@@ -90,6 +90,33 @@ The earlier procedural-then-raster bake path (`scripts/bake-character-sprites.ts
 + painterly v3) still exists as the engine's general capability and as the
 fallback when no painted source art is available.
 
+## 3D variant (real depth, not a billboard)
+
+The 2D imageSprite art is a flat billboard ("贴图，生硬"). Each character also
+carries a `metadata.model3d` spec — a posable cel-shaded low-poly humanoid
+rendered in **genuine 3D** (three.js `WebGL1Renderer` on headless-gl, under
+xvfb) by `scripts/lib/character3d.mjs`. `qc-render.ts` prefers it: the fighters
+get volume, turn to face each other (yaw from the timeline angle), and
+articulate limbs per action (walk stride, attack thrust, victory raise) — real
+3D, not a slid plane.
+
+```bash
+xvfb-run -a node --import tsx scripts/qc-render.ts --kind filmstrip \
+  --project deliverables/kof-orochi/project.json \
+  --library deliverables/kof-orochi/library.json \
+  --big 1 --cols 5 --rows 5 --duration 30 --out /tmp/story3d.png
+```
+
+Renders: `renders/storyboard_3d.png`, `renders/keyframes_3d.png`.
+
+**Honest scope:** these are *procedural low-poly* 3D figures (capsules/boxes,
+coloured per fighter) — they prove real 3D rotation/articulation but are not
+high-fidelity. True Iori/Orochi 3D needs an **image→3D model** (Tripo /
+Hunyuan3D / Meshy), which this sandbox can't run (no GPU, image/3D APIs
+unreachable). The moment a rigged `.glb` exists, it loads into the same three.js
+path (GLTFLoader) with no further engine change — the `cucumber-3d-fetcher`
+skill is the on-ramp.
+
 ## Notes / honest caveats
 
 - **codex image-gen was not available in this environment** (no codex CLI / key,

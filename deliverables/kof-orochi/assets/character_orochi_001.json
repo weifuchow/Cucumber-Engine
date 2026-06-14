@@ -395,6 +395,17 @@
           }
         ]
       }
+    },
+    "model3d": {
+      "spec": {
+        "coat": "#bd9476",
+        "skin": "#e6cdb8",
+        "hair": "#dfe3ee",
+        "pants": "#cfd0db",
+        "shoe": "#5e4c3e",
+        "spikes": 0
+      },
+      "rim": "#7cf2c0"
     }
   },
   "license": {
