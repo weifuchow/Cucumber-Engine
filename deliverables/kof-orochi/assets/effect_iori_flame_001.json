@@ -1,0 +1,20 @@
+{
+  "assetId":"effect_iori_flame_001","name":"八稚女·紫焰","category":"visual","type":"effect","scope":"project",
+  "source":{"kind":"generated","format":"procedural","originalFile":"built-in"},
+  "files":{"preview":"procedural://effect_iori_flame_001"},
+  "tags":["kof","iori","flame","purple","effect"],
+  "metadata":{"blendMode":"screen","defaultDuration":0.7,
+    "references":[{"sourceType":"web","source":"https://snk.fandom.com/wiki/Iori_Yagami","note":"Yagami purple flames (八稚女)"}],
+    "shape":{"primitives":[
+      {"kind":"circle","cx":0,"cy":0,"r":"60 + progress*70",
+        "fill":{"gradient":"radial","x0":0,"y0":0,"r0":0,"x1":0,"y1":0,"r1":"60 + progress*70",
+          "stops":[{"at":0,"color":"rgba(210,150,255,${0.85*(1-progress)})"},
+                   {"at":0.5,"color":"rgba(150,60,220,${0.5*(1-progress)})"},
+                   {"at":1,"color":"rgba(110,30,180,0)"}]}},
+      {"kind":"starBurst","cx":0,"cy":0,"spikes":12,"outer":"50 + progress*90","inner":"18 + progress*20","rotation":"progress*PI*0.7",
+        "fill":"rgba(200,130,255,${0.8*(1-progress)})","stroke":"rgba(235,200,255,${0.9*(1-progress)})","lineWidth":3},
+      {"kind":"particles","count":26,"cx":"cos(seed*0.9)*(20+progress*70)","cy":"-(progress*150) + sin(seed*0.5)*20 - seed*1.5",
+        "r":"2 + (seed%4)","fill":"rgba(190,120,255,${0.85*(1-progress)})","particleShape":"spark","stroke":"rgba(235,205,255,${0.8*(1-progress)})","lineWidth":1.5}
+    ]}},
+  "license":{"type":"internal-generated","author":"Cucumber Engine","sourceUrl":"","commercialUse":true,"needAttribution":false}
+}

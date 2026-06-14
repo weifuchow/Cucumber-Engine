@@ -1,0 +1,84 @@
+{
+  "segmentId": "seg_iori_vs_orochi_001",
+  "name": "八神庵 vs 大蛇 · 封印之地决战",
+  "duration": 30,
+  "timeline": [
+    { "time": 0.0, "type": "cameraChange", "camera": { "mode": "wide", "zoom": 0.95, "duration": 1.0, "transition": "smooth", "ease": "easeOut", "jitter": 0.6 } },
+    { "time": 0.4, "type": "characterAppear", "target": "character_iori_001", "position": { "x": 380, "y": 600, "angle": "sideRight" }, "expression": "angry", "scale": 0.7 },
+    { "time": 0.4, "type": "characterAppear", "target": "character_orochi_001", "position": { "x": 900, "y": 600, "angle": "sideLeft" }, "expression": "neutral", "scale": 0.72 },
+    { "time": 0.6, "type": "characterAction", "target": "character_iori_001", "action": { "name": "idle", "params": {} } },
+    { "time": 0.6, "type": "characterAction", "target": "character_orochi_001", "action": { "name": "idle", "params": {} } },
+
+    { "time": 1.0, "type": "subtitle", "text": "大蛇……今日，就由我八神来了结。", "duration": 3.0, "style": { "position": "bottom", "color": "#ffe0e0" } },
+    { "time": 2.2, "type": "cameraChange", "camera": { "mode": "medium", "target": "character_iori_001", "zoom": 1.12, "duration": 1.6, "transition": "smooth", "ease": "easeOut", "jitter": 0.7 } },
+
+    { "time": 4.2, "type": "subtitle", "text": "血の宿命……逃れられぬ运命だ。", "duration": 2.8, "style": { "position": "bottom", "color": "#d8ffe8" } },
+    { "time": 4.4, "type": "headTurn", "target": "character_orochi_001", "yaw": -0.3, "pitch": 0.05, "duration": 0.6, "ease": "easeInOut" },
+
+    { "time": 6.2, "type": "cameraChange", "camera": { "mode": "wide", "zoom": 1.0, "duration": 0.8, "transition": "smooth", "ease": "easeInOut", "jitter": 0.9 } },
+    { "time": 6.4, "type": "characterAction", "target": "character_iori_001", "action": { "name": "attack", "params": {} } },
+    { "time": 6.4, "type": "characterMove", "target": "character_iori_001", "to": { "x": 560, "y": 600, "angle": "sideRight" }, "duration": 0.45, "ease": "overshoot" },
+    { "time": 6.6, "type": "characterAction", "target": "character_orochi_001", "action": { "name": "defend", "params": {} } },
+    { "time": 6.85, "type": "frameHold", "fps": 8, "duration": 0.35 },
+    { "time": 6.85, "type": "effectPlay", "effectId": "effect_clash_impact_001", "position": { "x": 660, "y": 520 }, "duration": 0.45 },
+    { "time": 6.9, "type": "expressionChange", "target": "character_orochi_001", "expression": "surprised", "intensity": 0.8 },
+
+    { "time": 7.6, "type": "characterAction", "target": "character_orochi_001", "action": { "name": "attack", "params": {} } },
+    { "time": 7.6, "type": "characterMove", "target": "character_orochi_001", "to": { "x": 740, "y": 600, "angle": "sideLeft" }, "duration": 0.5, "ease": "overshoot" },
+    { "time": 7.7, "type": "characterAction", "target": "character_iori_001", "action": { "name": "defend", "params": {} } },
+    { "time": 8.0, "type": "frameHold", "fps": 8, "duration": 0.3 },
+    { "time": 8.0, "type": "effectPlay", "effectId": "effect_clash_impact_001", "position": { "x": 660, "y": 530 }, "duration": 0.45 },
+    { "time": 8.1, "type": "expressionChange", "target": "character_orochi_001", "expression": "smug", "intensity": 1 },
+
+    { "time": 9.0, "type": "cameraChange", "camera": { "mode": "closeUp", "target": "character_orochi_001", "zoom": 1.3, "duration": 1.2, "transition": "smooth", "ease": "easeOut", "jitter": 0.6 } },
+    { "time": 9.2, "type": "characterMove", "target": "character_iori_001", "to": { "x": 470, "y": 600, "angle": "sideRight" }, "duration": 0.6, "ease": "easeOut", "arc": 36 },
+    { "time": 9.4, "type": "subtitle", "text": "大蛇之力，量地球意志……", "duration": 2.6, "style": { "position": "top", "color": "#d8ffe8" } },
+
+    { "time": 11.6, "type": "cameraChange", "camera": { "mode": "wide", "zoom": 1.0, "duration": 1.0, "transition": "smooth", "ease": "easeInOut", "jitter": 1.0 } },
+    { "time": 11.8, "type": "characterAction", "target": "character_orochi_001", "action": { "name": "victory", "params": {} } },
+    { "time": 12.0, "type": "effectPlay", "effectId": "effect_orochi_energy_001", "position": { "x": 740, "y": 470 }, "duration": 1.6 },
+    { "time": 12.2, "type": "frameHold", "fps": 10, "duration": 0.5 },
+    { "time": 12.4, "type": "expressionChange", "target": "character_iori_001", "expression": "surprised", "intensity": 1 },
+    { "time": 12.6, "type": "characterMove", "target": "character_iori_001", "to": { "x": 300, "y": 600, "angle": "sideRight" }, "duration": 0.7, "ease": "easeOut", "arc": 70 },
+
+    { "time": 14.0, "type": "subtitle", "text": "ぐっ……これが大蛇の本気か。", "duration": 2.4, "style": { "position": "bottom", "color": "#ffe0e0" } },
+    { "time": 14.2, "type": "characterAction", "target": "character_iori_001", "action": { "name": "defend", "params": {} } },
+    { "time": 14.4, "type": "cameraChange", "camera": { "mode": "closeUp", "target": "character_iori_001", "zoom": 1.32, "duration": 1.0, "transition": "smooth", "ease": "easeOut", "jitter": 0.7 } },
+
+    { "time": 16.2, "type": "expressionChange", "target": "character_iori_001", "expression": "angry", "intensity": 1 },
+    { "time": 16.4, "type": "characterAction", "target": "character_iori_001", "action": { "name": "idle", "params": {} } },
+    { "time": 16.5, "type": "subtitle", "text": "だが……俺の炎は、消えない。", "duration": 2.4, "style": { "position": "bottom", "color": "#ffd0e0" } },
+    { "time": 16.6, "type": "cameraChange", "camera": { "mode": "wide", "zoom": 1.0, "duration": 1.0, "transition": "smooth", "ease": "easeInOut", "jitter": 0.8 } },
+
+    { "time": 19.2, "type": "characterAction", "target": "character_iori_001", "action": { "name": "attack", "params": {} } },
+    { "time": 19.2, "type": "characterMove", "target": "character_iori_001", "to": { "x": 690, "y": 600, "angle": "sideRight" }, "duration": 0.5, "ease": "overshoot", "arc": 30 },
+    { "time": 19.5, "type": "effectPlay", "effectId": "effect_iori_flame_001", "position": { "x": 790, "y": 520 }, "duration": 0.7 },
+    { "time": 19.6, "type": "frameHold", "fps": 6, "duration": 0.5 },
+    { "time": 19.6, "type": "subtitle", "text": "八稚女ッ！", "duration": 1.4, "style": { "position": "center", "color": "#e8c0ff", "fontSize": 40, "weight": "bold" } },
+    { "time": 19.7, "type": "expressionChange", "target": "character_orochi_001", "expression": "scared", "intensity": 1 },
+    { "time": 19.9, "type": "characterMove", "target": "character_orochi_001", "to": { "x": 1010, "y": 600, "angle": "sideLeft" }, "duration": 0.7, "ease": "easeOut", "arc": 80 },
+
+    { "time": 21.4, "type": "cameraChange", "camera": { "mode": "medium", "target": "character_orochi_001", "zoom": 1.15, "duration": 1.0, "transition": "smooth", "ease": "easeOut", "jitter": 0.9 } },
+    { "time": 21.6, "type": "characterAction", "target": "character_orochi_001", "action": { "name": "defend", "params": {} } },
+    { "time": 21.8, "type": "effectPlay", "effectId": "effect_iori_flame_001", "position": { "x": 1000, "y": 540 }, "duration": 0.7 },
+
+    { "time": 23.2, "type": "characterAction", "target": "character_iori_001", "action": { "name": "attack", "params": {} } },
+    { "time": 23.2, "type": "characterMove", "target": "character_iori_001", "to": { "x": 840, "y": 600, "angle": "sideRight" }, "duration": 0.5, "ease": "overshoot" },
+    { "time": 23.5, "type": "effectPlay", "effectId": "effect_clash_impact_001", "position": { "x": 940, "y": 520 }, "duration": 0.45 },
+    { "time": 23.55, "type": "effectPlay", "effectId": "effect_iori_flame_001", "position": { "x": 950, "y": 510 }, "duration": 0.7 },
+    { "time": 23.6, "type": "frameHold", "fps": 6, "duration": 0.6 },
+    { "time": 23.8, "type": "expressionChange", "target": "character_orochi_001", "expression": "crying", "intensity": 1 },
+    { "time": 24.0, "type": "characterMove", "target": "character_orochi_001", "to": { "x": 1120, "y": 600, "angle": "sideLeft" }, "duration": 0.8, "ease": "easeOut", "arc": 50 },
+
+    { "time": 25.4, "type": "cameraChange", "camera": { "mode": "medium", "zoom": 1.05, "duration": 1.2, "transition": "smooth", "ease": "easeOut", "jitter": 0.4 } },
+    { "time": 25.6, "type": "characterAction", "target": "character_orochi_001", "action": { "name": "defend", "params": {} } },
+    { "time": 25.8, "type": "characterMove", "target": "character_iori_001", "to": { "x": 720, "y": 600, "angle": "sideRight" }, "duration": 0.7, "ease": "easeInOut" },
+
+    { "time": 27.0, "type": "characterTurn", "target": "character_iori_001", "angle": "front", "duration": 0.4 },
+    { "time": 27.1, "type": "characterAction", "target": "character_iori_001", "action": { "name": "victory", "params": {} } },
+    { "time": 27.2, "type": "expressionChange", "target": "character_iori_001", "expression": "smug", "intensity": 1 },
+    { "time": 27.3, "type": "subtitle", "text": "これで終わりだ。宿命など、俺が断ち切る。", "duration": 2.6, "style": { "position": "bottom", "color": "#ffd0e0" } },
+    { "time": 27.4, "type": "cameraChange", "camera": { "mode": "wide", "zoom": 0.98, "duration": 2.2, "transition": "smooth", "ease": "easeOut", "jitter": 0.3 } },
+    { "time": 29.6, "type": "effectPlay", "effectId": "effect_iori_flame_001", "position": { "x": 720, "y": 470 }, "duration": 0.7 }
+  ]
+}

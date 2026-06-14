@@ -1,0 +1,85 @@
+{
+  "assetId": "scene_orochi_arena_001",
+  "name": "大蛇结界·暴风封印之地",
+  "category": "visual",
+  "type": "scene",
+  "scope": "project",
+  "source": { "kind": "generated", "format": "procedural", "originalFile": "built-in" },
+  "files": { "preview": "procedural://scene_orochi_arena_001" },
+  "tags": ["kof", "orochi", "arena", "storm", "scene"],
+  "metadata": {
+    "width": 1280,
+    "height": 720,
+    "layers": ["background", "midground", "foreground"],
+    "references": [
+      { "sourceType": "web", "source": "https://snk.fandom.com/wiki/Orochi", "note": "Orochi sealing ground — stormy ritual field with torii/seal motif" }
+    ],
+    "shape": {
+      "preview": { "fit": "contain" },
+      "parallax": { "background": 0.45, "midground": 1, "foreground": 1.3 },
+      "primitives": [],
+      "layers": {
+        "background": [
+          { "kind": "rect", "x": -200, "y": 0, "w": 1680, "h": 720,
+            "fill": { "gradient": "linear", "x0": 0, "y0": 0, "x1": 0, "y1": 720,
+              "stops": [
+                { "at": 0, "color": "#140f26" },
+                { "at": 0.42, "color": "#241a3a" },
+                { "at": 0.62, "color": "#37402f" },
+                { "at": 1, "color": "#1a1d18" } ] } },
+          { "kind": "ellipse", "cx": 640, "cy": 250, "rx": 520, "ry": 300,
+            "fill": { "gradient": "radial", "x0": 640, "y0": 250, "r0": 30, "x1": 640, "y1": 250, "r1": 520,
+              "stops": [
+                { "at": 0, "color": "rgba(150,255,200,0.20)" },
+                { "at": 0.5, "color": "rgba(90,180,150,0.08)" },
+                { "at": 1, "color": "rgba(90,180,150,0)" } ] } },
+          { "kind": "polygon", "points": [
+              { "x": -200, "y": 470 }, { "x": 180, "y": 300 }, { "x": 460, "y": 440 },
+              { "x": 760, "y": 290 }, { "x": 1100, "y": 450 }, { "x": 1480, "y": 320 },
+              { "x": 1480, "y": 720 }, { "x": -200, "y": 720 } ],
+            "fill": { "gradient": "linear", "x0": 0, "y0": 290, "x1": 0, "y1": 560,
+              "stops": [ { "at": 0, "color": "#2a2b34" }, { "at": 1, "color": "#15161c" } ] } },
+          { "kind": "rect", "x": 560, "y": 250, "w": 24, "h": 230, "fill": "#3a1820" },
+          { "kind": "rect", "x": 696, "y": 250, "w": 24, "h": 230, "fill": "#3a1820" },
+          { "kind": "rect", "x": 524, "y": 236, "w": 232, "h": 22, "fill": "#511f28" },
+          { "kind": "rect", "x": 548, "y": 270, "w": 184, "h": 14, "fill": "#451a22" },
+          { "kind": "rect", "x": -200, "y": 0, "w": 1680, "h": 320,
+            "fill": { "gradient": "linear", "x0": 0, "y0": 0, "x1": 0, "y1": 320,
+              "stops": [ { "at": 0, "color": "rgba(120,150,180,0.32)" }, { "at": 1, "color": "rgba(120,150,180,0)" } ] } },
+          { "kind": "noise", "x": -200, "y": 0, "w": 1680, "h": 720, "scale": 0.9, "alpha": 0.14, "blendMode": "multiply", "seed": 7711 }
+        ],
+        "midground": [
+          { "kind": "ellipse", "cx": 640, "cy": 620, "rx": 560, "ry": 90,
+            "fill": { "gradient": "radial", "x0": 640, "y0": 620, "r0": 20, "x1": 640, "y1": 620, "r1": 560,
+              "stops": [
+                { "at": 0, "color": "rgba(140,255,205,0.16)" },
+                { "at": 0.6, "color": "rgba(80,150,120,0.05)" },
+                { "at": 1, "color": "rgba(80,150,120,0)" } ] } },
+          { "kind": "rect", "x": -200, "y": 612, "w": 1680, "h": 160,
+            "fill": { "gradient": "linear", "x0": 0, "y0": 612, "x1": 0, "y1": 720,
+              "stops": [ { "at": 0, "color": "#2c2a26" }, { "at": 1, "color": "#16140f" } ] } },
+          { "kind": "ellipse", "cx": 640, "cy": 628, "rx": 300, "ry": 46,
+            "fill": "rgba(0,0,0,0)", "stroke": "rgba(150,255,205,0.4)", "lineWidth": 2.5 },
+          { "kind": "ellipse", "cx": 640, "cy": 628, "rx": 220, "ry": 34,
+            "fill": "rgba(0,0,0,0)", "stroke": "rgba(150,255,205,0.28)", "lineWidth": 1.8 },
+          { "kind": "line", "x1": 420, "y1": 628, "x2": 860, "y2": 628, "stroke": "rgba(150,255,205,0.22)", "lineWidth": 1.5 }
+        ],
+        "foreground": [
+          { "kind": "polygon", "points": [
+              { "x": -120, "y": 720 }, { "x": -120, "y": 540 }, { "x": 40, "y": 600 }, { "x": 150, "y": 720 } ],
+            "fill": { "gradient": "linear", "x0": 0, "y0": 540, "x1": 0, "y1": 720,
+              "stops": [ { "at": 0, "color": "#23201b" }, { "at": 1, "color": "#0c0b08" } ] },
+            "stroke": "rgba(0,0,0,0.6)", "lineWidth": 2,
+            "rimLight": { "color": "rgba(150,255,205,0.45)", "fromAngle": -1.0, "width": 2.4, "falloff": 0.4 } },
+          { "kind": "polygon", "points": [
+              { "x": 1400, "y": 720 }, { "x": 1400, "y": 560 }, { "x": 1240, "y": 610 }, { "x": 1130, "y": 720 } ],
+            "fill": { "gradient": "linear", "x0": 0, "y0": 560, "x1": 0, "y1": 720,
+              "stops": [ { "at": 0, "color": "#23201b" }, { "at": 1, "color": "#0c0b08" } ] },
+            "stroke": "rgba(0,0,0,0.6)", "lineWidth": 2,
+            "rimLight": { "color": "rgba(176,118,255,0.4)", "fromAngle": -2.2, "width": 2.4, "falloff": 0.4 } }
+        ]
+      }
+    }
+  },
+  "license": { "type": "internal-generated", "author": "Cucumber Engine", "sourceUrl": "", "commercialUse": true, "needAttribution": false }
+}

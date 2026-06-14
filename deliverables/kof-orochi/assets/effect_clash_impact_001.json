@@ -1,0 +1,20 @@
+{
+  "assetId":"effect_clash_impact_001","name":"激突·白闪","category":"visual","type":"effect","scope":"project",
+  "source":{"kind":"generated","format":"procedural","originalFile":"built-in"},
+  "files":{"preview":"procedural://effect_clash_impact_001"},
+  "tags":["kof","impact","clash","effect"],
+  "metadata":{"blendMode":"screen","defaultDuration":0.45,
+    "references":[{"sourceType":"design-note","source":"design-note","note":"generic fighting-game hit flash"}],
+    "shape":{"primitives":[
+      {"kind":"circle","cx":0,"cy":0,"r":"40 + progress*120",
+        "fill":{"gradient":"radial","x0":0,"y0":0,"r0":0,"x1":0,"y1":0,"r1":"40 + progress*120",
+          "stops":[{"at":0,"color":"rgba(255,255,245,${0.95*(1-progress)})"},
+                   {"at":0.45,"color":"rgba(255,225,150,${0.6*(1-progress)})"},
+                   {"at":1,"color":"rgba(255,200,120,0)"}]}},
+      {"kind":"starBurst","cx":0,"cy":0,"spikes":8,"outer":"70 + progress*150","inner":"10","rotation":"0.2",
+        "fill":"rgba(255,255,250,${0.9*(1-progress)})","stroke":"rgba(255,230,170,${0.85*(1-progress)})","lineWidth":4},
+      {"kind":"particles","count":18,"cx":"cos(seed*0.9)*(progress*170)","cy":"sin(seed*0.9)*(progress*170)",
+        "r":"2 + (seed%3)","fill":"rgba(255,240,200,${0.9*(1-progress)})","particleShape":"spark","stroke":"rgba(255,255,255,${0.8*(1-progress)})","lineWidth":1.5}
+    ]}},
+  "license":{"type":"internal-generated","author":"Cucumber Engine","sourceUrl":"","commercialUse":true,"needAttribution":false}
+}
