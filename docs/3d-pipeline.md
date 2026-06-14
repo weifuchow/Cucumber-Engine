@@ -159,9 +159,13 @@ image(s) ──▶ mesh (Tripo/Hunyuan3D, multi-view input for accurate backs)
 
 ## Sequencing / definition of done
 
-1. **(this PR)** Spine mesh deform — closes the worst 2D Flash tell. ✅
-2. `imageSprite` primitive + `bake-gltf-views.ts` + lint support (Path C
-   engine side).
+1. Spine mesh deform — closes the worst 2D Flash tell. ✅
+2. `imageSprite` primitive (proceduralShape.ts) + raster bake
+   (`scripts/bake-character-sprites.ts`) + lint support — the engine can now
+   draw baked/painted bitmap sprites off the vector plane. ✅ Currently bakes
+   *procedural* art (supersample-soft edges + pixel paper-grain + ink-edge);
+   the same primitive drops in genuinely painted/generated frames unchanged.
+   A `bake-gltf-views.ts` (3D model → frames) is the remaining variant.
 3. `cucumber-3d-fetcher` skill wired to a real image→3D provider + the bake
    script (Path C content side). Skeleton landed; see
    `.claude/skills/cucumber-3d-fetcher/`.

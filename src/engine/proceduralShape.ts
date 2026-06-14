@@ -339,6 +339,38 @@ export type Primitive =
       lineWidth?: NumExpr;
       shadow?: ShadowSpec;
       rimLight?: RimLightSpec;
+    }
+  | {
+      /**
+       * Raster sprite — draws a bitmap (PNG) at the current transform origin.
+       * This is the engine's path OFF the vector/Flash plane: a baked or
+       * painted bitmap carries texture, soft edges and tonal form that
+       * procedural primitives cannot. General-purpose (any asset), not tied to
+       * any one character.
+       *
+       * Frame sequences: when `src` contains the token `{frame}` and `frames`
+       * > 1, the renderer substitutes the current frame index
+       * `floor(time * fps) % frames`, so a baked walk/attack loop plays from
+       * state.time (and respects frameHold, which rewrites state.time).
+       *
+       * Image loading is async but drawShape is sync: a per-module cache lazily
+       * loads in the browser (the rAF loop repaints once ready) and is
+       * pre-seeded in headless tooling via `registerSpriteImage`. A missing
+       * image is skipped (nothing drawn) rather than throwing.
+       *
+       * Anchor: `anchorX`/`anchorY` are 0..1 fractions of the draw box placed
+       * at the origin. Default (0.5, 1) = bottom-center, matching a character
+       * standing on the ground line.
+       */
+      kind: "imageSprite";
+      src: string;
+      frames?: number;
+      fps?: NumExpr;
+      w: NumExpr;
+      h: NumExpr;
+      anchorX?: NumExpr;
+      anchorY?: NumExpr;
+      shadow?: ShadowSpec;
     };
 
 export type ClipShape =
@@ -664,6 +696,10 @@ function drawPrimitive(
     }
     case "skinnedMesh": {
       drawSkinnedMesh(ctx, prim, palette, state);
+      return;
+    }
+    case "imageSprite": {
+      drawImageSprite(ctx, prim, state);
       return;
     }
     case "clip": {
@@ -1228,6 +1264,71 @@ function drawSkinnedMesh(
   if (!started) return;
   ctx.closePath();
   strokeFill(ctx, prim, palette, state);
+}
+
+// =====================================================================
+// IMAGE SPRITE — raster bitmap drawing (the path off the vector plane)
+// =====================================================================
+
+type SpriteImage = CanvasImageSource & {
+  complete?: boolean;
+  naturalWidth?: number;
+};
+
+const spriteImageCache = new Map<string, SpriteImage | null>();
+
+/** Pre-seed a decoded image for `src` (used by headless tooling that can't lazy-load). */
+export function registerSpriteImage(src: string, image: CanvasImageSource): void {
+  spriteImageCache.set(src, image as SpriteImage);
+}
+
+/** Drop all cached sprite images (e.g. when reloading an asset's frames). */
+export function clearSpriteImageCache(): void {
+  spriteImageCache.clear();
+}
+
+function resolveSpriteImage(src: string): SpriteImage | null {
+  const cached = spriteImageCache.get(src);
+  if (cached !== undefined) {
+    if (!cached) return null;
+    if (typeof cached.complete === "boolean" && !cached.complete) return null;
+    if (typeof cached.naturalWidth === "number" && cached.naturalWidth === 0) return null;
+    return cached;
+  }
+  // Browser: kick off a lazy load; the animation loop repaints once ready.
+  const ImageCtor = (globalThis as unknown as { Image?: new () => SpriteImage }).Image;
+  if (typeof ImageCtor === "function") {
+    const im = new ImageCtor();
+    spriteImageCache.set(src, im);
+    (im as unknown as { src: string }).src = src;
+    return null;
+  }
+  // Headless without a preload → nothing to draw.
+  spriteImageCache.set(src, null);
+  return null;
+}
+
+function drawImageSprite(
+  ctx: CanvasRenderingContext2D,
+  prim: Extract<Primitive, { kind: "imageSprite" }>,
+  state: ShapeState,
+) {
+  const frames = Math.max(1, Math.floor(prim.frames ?? 1));
+  let src = prim.src;
+  if (src.includes("{frame}")) {
+    const fps = frames > 1 ? evalNum(prim.fps ?? 12, state) : 0;
+    const t = numState(state, "time", 0);
+    const idx = frames > 1 ? (((Math.floor(Math.abs(t) * fps) % frames) + frames) % frames) : 0;
+    src = src.replace("{frame}", String(idx));
+  }
+  const img = resolveSpriteImage(src);
+  if (!img) return;
+  const w = evalNum(prim.w, state);
+  const h = evalNum(prim.h, state);
+  if (w <= 0 || h <= 0) return;
+  const ax = evalNum(prim.anchorX ?? 0.5, state);
+  const ay = evalNum(prim.anchorY ?? 1, state);
+  ctx.drawImage(img as CanvasImageSource, -w * ax, -h * ay, w, h);
 }
 
 /**

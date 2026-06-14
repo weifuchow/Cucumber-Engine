@@ -10,9 +10,9 @@
 //   npx tsx scripts/qc-render.ts --kind effect    --file e.json --out e.png
 //   npx tsx scripts/qc-render.ts --kind filmstrip --project p.json --seg s1 --out f.png  (timeline frames)
 
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
-import { createCanvas, type SKRSContext2D } from "@napi-rs/canvas";
+import { createCanvas, loadImage, type SKRSContext2D } from "@napi-rs/canvas";
 
 // Polyfill the bits of `document` the noise primitive touches (it builds an
 // offscreen canvas for its tiled pattern). Harness-side only.
@@ -24,9 +24,33 @@ import { createCanvas, type SKRSContext2D } from "@napi-rs/canvas";
 };
 
 import { drawCharacter } from "../src/engine/characterPainter.ts";
-import { drawShape, drawSceneLayer, hasSceneLayers, type ProceduralShape } from "../src/engine/proceduralShape.ts";
+import { drawShape, drawSceneLayer, hasSceneLayers, registerSpriteImage, type ProceduralShape } from "../src/engine/proceduralShape.ts";
 import { evaluateTimeline } from "../src/engine/timeline.ts";
 import type { AssetManifest } from "../src/types/schema.ts";
+
+// Headless can't lazy-load images — pre-decode every imageSprite frame a
+// manifest references and seed the engine's sprite cache.
+async function preloadSprites(assets: AssetManifest[]) {
+  for (const a of assets) {
+    const shapesObj = (a.metadata.shapes as Record<string, ProceduralShape> | undefined) ?? {};
+    const shapes = [
+      ...Object.values(shapesObj),
+      (a.metadata.shape as ProceduralShape | undefined),
+    ].filter(Boolean) as ProceduralShape[];
+    for (const sh of shapes) {
+      for (const p of sh.primitives ?? []) {
+        if ((p as { kind?: string }).kind !== "imageSprite") continue;
+        const sp = p as { src: string; frames?: number };
+        const frames = Math.max(1, sp.frames ?? 1);
+        for (let f = 0; f < frames; f++) {
+          const src = sp.src.replace("{frame}", String(f));
+          if (!existsSync(src)) continue;
+          try { registerSpriteImage(src, await loadImage(src) as never); } catch { /* skip */ }
+        }
+      }
+    }
+  }
+}
 
 type Ctx = SKRSContext2D;
 
@@ -195,11 +219,20 @@ function renderFilmstrip(projectPath: string, out: string) {
   save(canvas, out);
 }
 
-function main() {
+async function main() {
   const kind = arg("kind", "character");
   const out = arg("out", "/tmp/qc/out.png")!;
-  if (kind === "filmstrip") { renderFilmstrip(arg("project")!, out); return; }
+  if (kind === "filmstrip") {
+    const libPath = arg("library");
+    if (libPath) {
+      const lib = load<{ globalAssets?: AssetManifest[]; projectAssets?: AssetManifest[] }>(libPath);
+      await preloadSprites([...(lib.globalAssets ?? []), ...(lib.projectAssets ?? [])]);
+    }
+    renderFilmstrip(arg("project")!, out);
+    return;
+  }
   const asset = load<AssetManifest>(arg("file")!);
+  await preloadSprites([asset]);
   if (kind === "character") renderCharacter(asset, out);
   else if (kind === "scene") renderScene(asset, out);
   else if (kind === "effect") renderEffect(asset, out);

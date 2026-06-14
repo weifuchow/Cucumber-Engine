@@ -451,6 +451,28 @@ function lintCharacterViewParity(asset: AssetManifest, findings: Finding[]) {
   }
 }
 
+function isRasterCharacter(shape: ProceduralShape): boolean {
+  return flattenShape(shape).some((p) => p.kind === "imageSprite");
+}
+
+function lintRasterCharacter(asset: AssetManifest, shape: ProceduralShape, findings: Finding[]) {
+  const prims = flattenShape(shape);
+  const hasSprite = prims.some((p) => p.kind === "imageSprite");
+  const hasContactShadow = prims.some(
+    (p) => p.kind === "ellipse" && JSON.stringify(p).includes("z"),
+  );
+  if (!hasSprite) {
+    findings.push({ assetId: asset.assetId, type: asset.type, scope: asset.scope, rule: "raster.sprite", message: "raster character has no imageSprite primitive" });
+  }
+  if (!hasContactShadow) {
+    findings.push({ assetId: asset.assetId, type: asset.type, scope: asset.scope, rule: "raster.contactShadow", message: "raster character should keep a z-aware contact-shadow ellipse so it grounds in 2.5D" });
+  }
+  const actions = (asset.metadata.actions as string[] | undefined) ?? [];
+  if (actions.length < 4) {
+    findings.push({ assetId: asset.assetId, type: asset.type, scope: asset.scope, rule: "raster.actions", message: `only ${actions.length} actions declared — bake ≥ 4 (idle/walking/attack/defend)` });
+  }
+}
+
 function lintAsset(asset: AssetManifest, findings: Finding[]) {
   const shapesBundle = getViewShapes(asset);
   const primaryShape = shapesBundle.front
@@ -458,6 +480,13 @@ function lintAsset(asset: AssetManifest, findings: Finding[]) {
     ?? (asset.metadata as { shape?: ProceduralShape }).shape;
   if (!primaryShape) return; // audio assets / non-procedural — skip
   if (!Array.isArray((primaryShape as { primitives?: unknown }).primitives)) return;
+  // Raster (baked-sprite) characters carry their geometry in the bitmap, not in
+  // procedural primitives — the procedural-topology rules don't apply. Require
+  // only that they actually have a sprite + a contact shadow + declared actions.
+  if (isRasterCharacter(primaryShape)) {
+    lintRasterCharacter(asset, primaryShape, findings);
+    return;
+  }
   if (asset.type === "character") {
     lintCharacter(asset, primaryShape, findings);
     lintCharacterViewParity(asset, findings);
@@ -485,6 +514,8 @@ function advisePainterly(asset: AssetManifest, advisories: Finding[]) {
     shapes.front ?? Object.values(shapes)[0] ?? (asset.metadata as { shape?: ProceduralShape }).shape;
   if (!primary || !Array.isArray((primary as { primitives?: unknown }).primitives)) return;
   const prims = flattenShape(primary);
+  // Raster sprites already carry texture/paint in the bitmap — not flat vector.
+  if (prims.some((p) => p.kind === "imageSprite")) return;
   const usesPainterly = prims.some(
     (p) => p.kind === "noise" || p.kind === "brush" || Boolean((p as { rimLight?: unknown }).rimLight),
   );

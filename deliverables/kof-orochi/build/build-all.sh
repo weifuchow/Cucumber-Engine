@@ -32,6 +32,14 @@ node $D/build/finalize-meta.mjs --in "$TMP/orochi_p.json" --out "$D/assets/chara
   "soundEffectIds":{"attack":"soundEffect_orochi_blast_001","victory":"soundEffect_orochi_roar_001"},
   "references":[{"sourceType":"web","source":"https://snk.fandom.com/wiki/Orochi","note":"pale host, silver hair, green energy — re-stylized chibi"}]}'
 
+# --- bake procedural → raster sprites (off the vector plane) ---
+for c in iori orochi; do
+  npx tsx scripts/bake-character-sprites.ts \
+    --file "$D/assets/character_${c}_001.json" \
+    --outDir "$D/sprites" --srcBase "$D/sprites" \
+    --out "$D/assets/character_${c}_001.json"
+done
+
 # --- assemble + render ---
 node $D/build/assemble.mjs
 npx tsx scripts/qc-render.ts --kind filmstrip --project $D/project.json --library $D/library.json \

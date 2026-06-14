@@ -67,6 +67,24 @@ The timeline leans on the engine's motion layer: `characterMove` uses
 (front via ¾); every standing beat carries the automatic per-character idle
 breath. Iori's flames rim purple, Orochi's energy rims green — readable sides.
 
+## Raster route (off the vector/Flash plane)
+
+The characters are **baked raster sprites**, not live procedural shapes. The
+procedural figures (built via the skill) are rendered through
+`scripts/bake-character-sprites.ts` into bitmap frames
+(`sprites/<id>/<view>/<action>/{frame}.png`) and the manifest's
+`metadata.shapes[view]` use the new engine **`imageSprite`** primitive
+(`src/engine/proceduralShape.ts`). The bake does raster-only work the vector
+primitives can't: 3× supersample → soft anti-aliased edges (kills the crisp
+vector line), per-pixel paper-grain multiply, and a silhouette ink-edge darken.
+
+`sprites/` is git-ignored (regenerable) — `build-all.sh` bakes it. The engine
+`imageSprite` primitive is general: the moment genuinely **painted or
+AI-generated** frames exist, they drop into the same `shapes[view]` slots with
+no further engine change — that is the true escape from the vector look (the
+re-rasterized procedural art here is the best achievable without an external
+paint/image source).
+
 ## Notes / honest caveats
 
 - **codex image-gen was not available in this environment** (no codex CLI / key,
