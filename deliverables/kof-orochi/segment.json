@@ -4,8 +4,8 @@
   "duration": 30,
   "timeline": [
     { "time": 0.0, "type": "cameraChange", "camera": { "mode": "wide", "zoom": 0.95, "duration": 1.0, "transition": "smooth", "ease": "easeOut", "jitter": 0.6 } },
-    { "time": 0.4, "type": "characterAppear", "target": "character_iori_001", "position": { "x": 380, "y": 600, "angle": "sideRight" }, "expression": "angry", "scale": 0.7 },
-    { "time": 0.4, "type": "characterAppear", "target": "character_orochi_001", "position": { "x": 900, "y": 600, "angle": "sideLeft" }, "expression": "neutral", "scale": 0.72 },
+    { "time": 0.4, "type": "characterAppear", "target": "character_iori_001", "position": { "x": 380, "y": 600, "angle": "sideRight" }, "expression": "angry", "scale": 0.86 },
+    { "time": 0.4, "type": "characterAppear", "target": "character_orochi_001", "position": { "x": 900, "y": 600, "angle": "sideLeft" }, "expression": "neutral", "scale": 0.88 },
     { "time": 0.6, "type": "characterAction", "target": "character_iori_001", "action": { "name": "idle", "params": {} } },
     { "time": 0.6, "type": "characterAction", "target": "character_orochi_001", "action": { "name": "idle", "params": {} } },
 
