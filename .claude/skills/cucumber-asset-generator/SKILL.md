@@ -269,7 +269,7 @@ Values must be `sfx_*` or `soundEffect_*` assetIds resolvable in the asset libra
 
 ## Painterly primitives — escape the Flash look
 
-Four engine features that collectively shift the read from "SVG / Flash MX" toward "painterly cel animation". All optional; AI generators should use them on every character / scene unless the user explicitly asked for a flat / minimalist style.
+Four engine features that collectively shift the read from "SVG / Flash MX" toward "painterly cel animation". **Apply at least one (noise / brush / rimLight) on every character and scene by default** — flat fills are the #1 reason generated assets still read as Flash. Skip them only when the user explicitly asks for a flat / minimalist style. `npm run lint:2.5d` now emits a `painterly.advisory` for any character/scene that uses none of them, so a flat asset is a visible miss, not a silent default.
 
 ### `kind: "noise"` — paper grain / film grain overlay
 

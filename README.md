@@ -33,6 +33,7 @@ Without a key the server falls back to a silent-WAV mock TTS provider so the lip
 | **Real Spine mesh deform** | Mesh attachments import as `skinnedMesh` — bone-weighted vertices skin per frame (Σ weight·boneWorld·vertex), not rigid boxes |
 | **Multi-pass per-limb occlusion** | `metadata.bodyPartLayers: { behind, main, front }` — A's arm can pass behind B's torso |
 | **Camera handheld jitter + frame-hold stutter** | `camera.jitter` + `frameHold { fps, duration }` events |
+| **Motion polish (anti-Flash tweening)** | per-event `ease` (overshoot/anticipate/elastic) + `arc` paths + staged `characterTurn` + automatic idle breathing |
 | **Paper-grain + rim light + post-FX color grade** | `noise` / `brush` primitives + `rimLight` modifier + auto `postFX` LUT |
 | **AI generate a 30s segment** | "AI 生成片段" button → skill writes Chapter + Segment + missing assets |
 | **AI generate single asset** | "AI 生成资产" button → manifest with shape, palette, references, license |

@@ -1,3 +1,7 @@
+import type { EaseKind } from "../engine/easing";
+
+export type { EaseKind };
+
 export type AssetCategory = "visual" | "audio";
 
 export type AssetScope = "global" | "project";
@@ -228,6 +232,18 @@ export type TimelineEvent =
       target: string;
       to: { x: number; y: number; z?: number; angle?: AngleKey };
       duration: number;
+      /**
+       * Easing curve for the move. Defaults to `easeInOut` (the historical
+       * behavior). Use `overshoot` for a weighted stop, `anticipate` for a
+       * wind-up, `linear` for mechanical/conveyor motion.
+       */
+      ease?: EaseKind;
+      /**
+       * Vertical arc height in px. Characters travel a parabola peaking at
+       * mid-move instead of a dead-straight line — reads as a hop / gesture
+       * lift. Default 0 (straight). Positive lifts up (toward screen top).
+       */
+      arc?: number;
     }
   | {
       time: number;
@@ -268,6 +284,8 @@ export type TimelineEvent =
       /** Head pitch in radians. Positive = looking up. Range roughly ±0.4. */
       pitch?: number;
       duration?: number;
+      /** Easing for the head turn. Default `easeInOut`. */
+      ease?: EaseKind;
     }
   | { time: number; type: "sceneChange"; sceneId: string }
   | {
@@ -302,6 +320,11 @@ export type TimelineEvent =
          * Default 0 (locked tripod).
          */
         jitter?: number;
+        /**
+         * Easing for the camera push/pan. Default `easeInOut`. A slow
+         * `easeOut` reads as a settling dolly; `linear` as a programmed move.
+         */
+        ease?: EaseKind;
       };
     }
   | {

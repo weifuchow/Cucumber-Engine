@@ -80,17 +80,20 @@ type TimelineEvent =
   | { time, type: "sceneChange", sceneId }
   | { time, type: "cameraChange",
       camera: { mode, target?, x?, y?, zoom, duration, transition,
-                jitter? /* px peak displacement; 0.6–1.2 for handheld pan, 0 = locked tripod */ } }
+                jitter? /* px peak displacement; 0.6–1.2 for handheld pan, 0 = locked tripod */,
+                ease?   /* easeInOut(default) | easeOut(settling dolly) | linear(programmed) */ } }
   | { time, type: "frameHold",
       fps      /* 6 = anticipation hold, 10 = impact stutter, 12 = cel "on twos" */,
       duration /* seconds — typically 0.3–0.6 around an impact beat */ }
   | { time, type: "characterAppear", target, position: { x, y, z?, angle? }, expression?, scale? }
   | { time, type: "characterDisappear", target }
-  | { time, type: "characterMove", target, to: { x, y, z?, angle? }, duration }
+  | { time, type: "characterMove", target, to: { x, y, z?, angle? }, duration,
+      ease? /* easeInOut(default)|overshoot|anticipate|elastic|bounce|linear|easeIn|easeOut */,
+      arc?  /* px vertical arc height; >0 = hop/gesture lift, 0 = straight (default) */ }
   | { time, type: "characterAction", target, action: { name, params } }
   | { time, type: "expressionChange", target, expression, intensity? /* 0..1 */ }
-  | { time, type: "characterTurn", target, angle: AngleKey, duration? }
-  | { time, type: "headTurn", target, yaw /* radians ±0.6 */, pitch?, duration? }
+  | { time, type: "characterTurn", target, angle: AngleKey, duration? /* >0 routes through a ¾ pose */ }
+  | { time, type: "headTurn", target, yaw /* radians ±0.6 */, pitch?, duration?, ease? }
   | { time, type: "propChange", propId, visible?, position? }
   | { time, type: "effectPlay", effectId, position, duration }
   | { time, type: "subtitle", text, duration }
@@ -102,6 +105,20 @@ type TimelineEvent =
   | { time, type: "bgmPlay", assetId, volume }
   | { time, type: "soundEffect", assetId, volume };
 ```
+
+## Motion polish — escape Flash tweening
+
+Uniform symmetric `easeInOut` on every move + dead-straight paths + frozen
+standing characters is the signature "Flash motion tween" read. The engine now
+gives you the tools to break it; **use them on every segment**:
+
+| Lever | Rule of thumb |
+|---|---|
+| **`ease` on characterMove** | A character arriving at a mark should `ease: "overshoot"` (weighted stop). A reach/lunge should `ease: "anticipate"` (wind-up). Reserve plain `easeInOut`/`linear` for mechanical motion. **Don't** leave every move on the default. |
+| **`arc` on characterMove** | Any move that isn't a flat walk gets a small `arc` (20–60 px) so the path bows instead of sliding ruler-straight. Hops/dodges use larger arcs. |
+| **`characterTurn` `duration`** | Always give a turn a `duration` (0.2–0.4 s) so it routes front→¾→side instead of snapping. A 0-duration turn teleports — only use that for a hard cut. |
+| **`ease` on cameraChange** | A settling dolly-in reads better as `easeOut` than symmetric `easeInOut`. |
+| **Idle breath is automatic** | Every visible character gets a subtle, desynced breathing bob for free — you do **not** author it. But that means a "nothing happens" segment still looks alive only at the breath level; you still owe at least one real `characterAction` (TL5). |
 
 ## Style bars (opt-in per project)
 

@@ -1,4 +1,5 @@
 import type { AngleKey, AssetLibrary, Project, Segment, TimelineEvent, Viseme, VisemeFrame } from "../types/schema";
+import { applyEase } from "./easing";
 
 export interface CharacterRenderState {
   assetId: string;
@@ -163,7 +164,7 @@ export function evaluateTimeline(project: Project, library: AssetLibrary, time: 
     const prev = myTurns.length >= 2 ? myTurns[myTurns.length - 2] : null;
     const fromYaw = prev?.yaw ?? 0;
     const fromPitch = prev?.pitch ?? 0;
-    const t = easeInOut((time - last.time) / dur);
+    const t = applyEase(last.ease, (time - last.time) / dur);
     characterMap.set(id, {
       ...char,
       headYaw: lerp(fromYaw, last.yaw, t),
@@ -204,7 +205,10 @@ export function evaluateTimeline(project: Project, library: AssetLibrary, time: 
 
     const from = getPositionBeforeMove(segment.timeline, move.target, move.time);
     const progress = clamp((time - move.time) / Math.max(move.duration, 0.001), 0, 1);
-    const eased = easeInOut(progress);
+    const eased = applyEase(move.ease, progress);
+    // Optional travel arc: a parabola peaking at mid-move so the path reads
+    // as a hop/gesture lift instead of a dead-straight slide. 0 = straight.
+    const arcLift = move.arc ? Math.sin(progress * Math.PI) * move.arc : 0;
     const targetZ = move.to.z ?? current.z;
     // Angle resolution priority:
     //   1. explicit move.to.angle
@@ -218,14 +222,37 @@ export function evaluateTimeline(project: Project, library: AssetLibrary, time: 
     characterMap.set(move.target, {
       ...current,
       x: lerp(from.x, move.to.x, eased),
-      y: lerp(from.y, move.to.y, eased),
+      y: lerp(from.y, move.to.y, eased) - arcLift,
       z: lerp(from.z, targetZ, eased),
       angle: nextAngle,
     });
   }
 
+  // ---- character turn staging --------------------------------------------
+  //
+  // A `characterTurn` with a `duration` now reads through an intermediate
+  // 3/4 pose instead of teleporting between front and side. Discrete angle
+  // views can't be lerped, but routing front→¾→side across the duration
+  // sells the rotation. Runs after the move pass so an explicit turn wins.
+  const charTurns = segment.timeline.filter(
+    (e): e is Extract<TimelineEvent, { type: "characterTurn" }> => e.type === "characterTurn",
+  );
+  for (const [id, char] of characterMap) {
+    const mine = charTurns.filter((e) => e.target === id && e.time <= time);
+    const last = mine.at(-1);
+    if (!last || !last.duration || last.duration <= 0) continue;
+    if (time >= last.time + last.duration) continue; // settled — main loop already set the target
+    const fromAngle: AngleKey =
+      mine.length >= 2 ? mine[mine.length - 2].angle : getAppearAngle(segment.timeline, id);
+    const progress = (time - last.time) / last.duration;
+    characterMap.set(id, { ...char, angle: stagedTurnAngle(fromAngle, last.angle, progress) });
+  }
+
   const characters = [...characterMap.values()].filter((character) => character.visible);
+  // Camera resolves against base positions so the idle breath below doesn't
+  // make a `follow` camera bob.
   const camera = evaluateCamera(segment.timeline, characters, time);
+  const breathingCharacters = withIdleBreathing(characters, time);
   const { text: caption, style: captionStyle } = evaluateCaption(segment.timeline, time);
   const effects = segment.timeline
     .filter((event): event is Extract<TimelineEvent, { type: "effectPlay" }> => event.type === "effectPlay")
@@ -239,12 +266,73 @@ export function evaluateTimeline(project: Project, library: AssetLibrary, time: 
 
   return {
     sceneId,
-    characters,
+    characters: breathingCharacters,
     effects,
     camera,
     caption,
     captionStyle,
   };
+}
+
+/**
+ * Layer a subtle, per-character idle breath onto the resolved poses: a slow
+ * vertical bob + a fainter horizontal sway, desynced per character via a name
+ * hash. This kills the "frozen mannequin" read with zero authoring — a static
+ * standing character that never moves between keyframes is itself a Flash
+ * tell. Amplitude drops while the character is mid-action so it never fights
+ * a deliberate animation. Runs on the frame-held time, so it respects "on
+ * twos" holds.
+ */
+function withIdleBreathing(
+  characters: CharacterRenderState[],
+  time: number,
+): CharacterRenderState[] {
+  return characters.map((c) => {
+    const action = c.action ?? "idle";
+    const calm = action === "idle" || action === "neutral" || action === "";
+    const amp = calm ? 1 : 0.35;
+    const phase = breathPhase(c.assetId);
+    const bob = Math.sin(time * 1.6 + phase) * 1.6 * amp; // ~0.25 Hz, ≤1.6px
+    const sway = Math.sin(time * 0.9 + phase * 1.7) * 0.45 * amp;
+    return { ...c, x: c.x + sway, y: c.y + bob };
+  });
+}
+
+/** Stable 0..2π phase from an asset id so two characters don't breathe in lockstep. */
+function breathPhase(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return ((h % 360) / 360) * Math.PI * 2;
+}
+
+/** The angle a character first appeared at (fallback for a turn's "from"). */
+function getAppearAngle(events: TimelineEvent[], target: string): AngleKey {
+  for (const e of events) {
+    if (e.type === "characterAppear" && e.target === target) return e.position.angle ?? "front";
+  }
+  return "front";
+}
+
+/**
+ * Resolve the displayed angle partway through a staged turn. Routes through a
+ * 3/4 view at the midpoint for the common front↔side / side↔side cases; for
+ * transitions with no clean intermediate it falls back to a half-way snap.
+ */
+function stagedTurnAngle(from: AngleKey, to: AngleKey, progress: number): AngleKey {
+  if (progress >= 1) return to;
+  const mid = midTurnAngle(from, to);
+  if (!mid) return progress < 0.5 ? from : to;
+  if (progress < 0.34) return from;
+  if (progress < 0.67) return mid;
+  return to;
+}
+
+function midTurnAngle(from: AngleKey, to: AngleKey): AngleKey | null {
+  const has = (a: AngleKey) => from === a || to === a;
+  if (has("front") && has("sideRight")) return "threeQuarterRight";
+  if (has("front") && has("sideLeft")) return "threeQuarterLeft";
+  if (has("sideLeft") && has("sideRight")) return "front";
+  return null;
 }
 
 export function getAssetName(library: AssetLibrary, assetId: string) {
@@ -288,7 +376,7 @@ function evaluateCamera(events: TimelineEvent[], characters: CharacterRenderStat
 
     if (time < event.time) break;
     if (event.camera.transition !== "cut" && event.camera.duration > 0 && time < event.time + event.camera.duration) {
-      const progress = easeInOut((time - event.time) / event.camera.duration);
+      const progress = applyEase(event.camera.ease, (time - event.time) / event.camera.duration);
       // Hand-held jitter — picked up from whichever cameraChange is
       // currently "active". Lerped during transitions so jitter level
       // ramps in/out smoothly.
@@ -365,11 +453,6 @@ function getPositionBeforeMove(events: TimelineEvent[], target: string, time: nu
 
 function lerp(start: number, end: number, progress: number) {
   return start + (end - start) * progress;
-}
-
-function easeInOut(progress: number) {
-  const t = clamp(progress, 0, 1);
-  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }
 
 function clamp(value: number, min: number, max: number) {

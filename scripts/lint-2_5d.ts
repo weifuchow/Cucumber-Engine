@@ -470,6 +470,36 @@ function lintAsset(asset: AssetManifest, findings: Finding[]) {
   }
 }
 
+/**
+ * Non-failing nudge: characters and scenes that use ZERO painterly primitives
+ * (noise / brush / rimLight) read as flat vector — the "Flash / SVG" look the
+ * engine has tools to escape but the generators keep skipping. We surface this
+ * as an advisory (does NOT affect the exit code) so existing flat assets keep
+ * passing while authors get pushed toward the painterly bar.
+ */
+function advisePainterly(asset: AssetManifest, advisories: Finding[]) {
+  const painterlyTypes = new Set(["character", "scene", "background", "foreground"]);
+  if (!painterlyTypes.has(asset.type)) return;
+  const shapes = getViewShapes(asset);
+  const primary =
+    shapes.front ?? Object.values(shapes)[0] ?? (asset.metadata as { shape?: ProceduralShape }).shape;
+  if (!primary || !Array.isArray((primary as { primitives?: unknown }).primitives)) return;
+  const prims = flattenShape(primary);
+  const usesPainterly = prims.some(
+    (p) => p.kind === "noise" || p.kind === "brush" || Boolean((p as { rimLight?: unknown }).rimLight),
+  );
+  if (!usesPainterly) {
+    advisories.push({
+      assetId: asset.assetId,
+      type: asset.type,
+      scope: asset.scope,
+      rule: "painterly.advisory",
+      message:
+        "no noise/brush/rimLight — flat fills read as Flash/SVG. Add paper grain (noise), a hand-drawn brush stroke, or a rimLight on the silhouette (see asset-generator SKILL ‘Painterly primitives’).",
+    });
+  }
+}
+
 async function loadLiveAssets(): Promise<AssetManifest[]> {
   const dbPath = resolve(process.cwd(), "data", "cucumber.db");
   if (!existsSync(dbPath)) return [];
@@ -771,12 +801,14 @@ async function main() {
     ? process.argv[process.argv.indexOf("--style") + 1] ?? null
     : null;
   const findings: Finding[] = [];
+  const advisories: Finding[] = [];
   const seen = new Set<string>();
   const seedAssets = [...sampleLibrary.globalAssets, ...sampleLibrary.projectAssets];
   for (const a of seedAssets) {
     seen.add(a.assetId);
     lintAsset(a, findings);
     lintAssetWithStyle(a, findings, style);
+    advisePainterly(a, advisories);
   }
   const liveAssets = await loadLiveAssets();
   for (const a of liveAssets) {
@@ -784,6 +816,7 @@ async function main() {
     seen.add(a.assetId);
     lintAsset(a, findings);
     lintAssetWithStyle(a, findings, style);
+    advisePainterly(a, advisories);
   }
 
   // Segment-level checks (style bar only)
@@ -810,6 +843,15 @@ async function main() {
   const totalScanned = seen.size;
   const styleSuffix = style ? ` (style: ${style})` : "";
   const totalFindings = findings.length + segmentFindings.length;
+
+  // Advisories are informational only — printed regardless of pass/fail and
+  // never change the exit code.
+  if (advisories.length) {
+    console.log(`[lint-2.5d] ${advisories.length} 条 painterly 建议（不计入失败）：`);
+    for (const a of advisories) {
+      console.log(`  · ${a.assetId} [${a.type}/${a.scope}]  ${a.rule}: ${a.message}`);
+    }
+  }
 
   if (!totalFindings) {
     console.log(`[lint-2.5d] ✓ ${totalScanned} 个资产 + ${segmentsScanned} 个 segment 全部通过${styleSuffix}。`);
