@@ -67,7 +67,7 @@ async function viewShape(char, stand, actionFile) {
 
 const MODEL3D = {
   iori:   { spec: { coat: "#7a1622", skin: "#e7b892", hair: "#c8202a", pants: "#1a1620", shoe: "#0e0c12", spikes: 9 }, rim: "#b076ff" },
-  orochi: { spec: { coat: "#bd9476", skin: "#e6cdb8", hair: "#dfe3ee", pants: "#cfd0db", shoe: "#5e4c3e", spikes: 0 }, rim: "#7cf2c0" },
+  orochi: { spec: { coat: "#b0855f", skin: "#e6cdb8", hair: "#e2e6f0", pants: "#c6c7d2", shoe: "#574636", spikes: 0, harness: true, band: "#1c2742" }, rim: "#7cf2c0" },
 };
 
 async function buildManifest(char, baseId, name, display, faces /* 'R' | 'L' */) {

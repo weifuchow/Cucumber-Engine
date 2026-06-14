@@ -107,7 +107,27 @@ xvfb-run -a node --import tsx scripts/qc-render.ts --kind filmstrip \
   --big 1 --cols 5 --rows 5 --duration 30 --out /tmp/story3d.png
 ```
 
-Renders: `renders/storyboard_3d.png`, `renders/keyframes_3d.png`.
+Renders: `renders/storyboard_3d.png`, `renders/keyframes_3d.png`, and the full
+**30 s video** `renders/fight_3d.mp4` (+ `fight_preview.gif`), encoded headlessly
+via `--kind video` (camera follow + zoom, subtitles, vignette/grain post-FX,
+ffmpeg through `@ffmpeg-installer`).
+
+```bash
+xvfb-run -a node --import tsx scripts/qc-render.ts --kind video \
+  --project deliverables/kof-orochi/project.json \
+  --library deliverables/kof-orochi/library.json \
+  --duration 30 --fps 24 --out deliverables/kof-orochi/renders/fight_3d.mp4
+```
+
+### High-fidelity glTF path (proven)
+`scripts/lib/gltf3d.mjs` loads + animates + renders any **rigged glTF/GLB**
+(three.js `GLTFLoader` + `AnimationMixer`, headless). Demo:
+`renders/gltf_demo.png` is `models/CesiumMan.glb` walking with its own skeletal
+clip across a turn. A character whose `metadata.model3d` is `{ "gltf": "x.glb" }`
+renders through this instead of the procedural humanoid — so an image→3D export
+(from `cucumber-3d-fetcher`: Tripo / Hunyuan3D / Meshy) drops in with no engine
+change. (Embedded GLB textures don't decode headlessly yet — models render
+untextured / tinted; a texture-decode polyfill is the follow-up.)
 
 **Honest scope:** these are *procedural low-poly* 3D figures (capsules/boxes,
 coloured per fighter) — they prove real 3D rotation/articulation but are not

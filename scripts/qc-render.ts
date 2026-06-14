@@ -10,8 +10,9 @@
 //   npx tsx scripts/qc-render.ts --kind effect    --file e.json --out e.png
 //   npx tsx scripts/qc-render.ts --kind filmstrip --project p.json --seg s1 --out f.png  (timeline frames)
 
-import { readFileSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
+import { spawnSync } from "node:child_process";
 import { createCanvas, loadImage, type SKRSContext2D } from "@napi-rs/canvas";
 
 // Polyfill the bits of `document` the noise primitive touches (it builds an
@@ -163,6 +164,72 @@ const YAW: Record<string, number> = {
   threeQuarterRight: 0.7, threeQuarterLeft: -0.7,
 };
 
+type Render3D = (o: { spec: unknown; yaw: number; action: string; time: number; W: number; H: number; rim: string }) => CanvasImageSource;
+type RenderGltf = (o: { path: string; yaw: number; time: number; W: number; H: number; rim: string; tint?: string }) => CanvasImageSource;
+interface WorldMaps { assetsById: Map<string, AssetManifest>; scenesById: Map<string, AssetManifest>; render3D?: Render3D; renderGltf?: RenderGltf }
+
+// Load whichever 3D backends the library needs: the procedural humanoid
+// (model3d.spec) and/or the glTF loader (model3d.gltf, preloaded).
+async function load3D(assetsById: Map<string, AssetManifest>): Promise<{ render3D?: Render3D; renderGltf?: RenderGltf }> {
+  const specs = [...assetsById.values()].map((a) => (a.metadata as { model3d?: { spec?: unknown; gltf?: string } }).model3d).filter(Boolean) as Array<{ spec?: unknown; gltf?: string }>;
+  let render3D: Render3D | undefined, renderGltf: RenderGltf | undefined;
+  if (specs.some((m) => m.spec)) ({ renderCharacter3D: render3D } = (await import("./lib/character3d.mjs")) as never);
+  if (specs.some((m) => m.gltf)) {
+    const g = (await import("./lib/gltf3d.mjs")) as { renderGltf3D: RenderGltf; preloadGltf: (p: string) => Promise<unknown> };
+    renderGltf = g.renderGltf3D;
+    for (const m of specs) if (m.gltf) await g.preloadGltf(m.gltf);
+  }
+  return { render3D, renderGltf };
+}
+
+// Draw scene + characters + effects in WORLD coordinates (1280×720). Shared by
+// the filmstrip (overview cells) and the video renderer (under a camera xform).
+function composeWorld(ctx: Ctx, st: ReturnType<typeof evaluateTimeline>, t: number, m: WorldMaps) {
+  const sceneAsset = m.scenesById.get(st.sceneId);
+  if (sceneAsset) {
+    const shape = (sceneAsset.metadata.shape as ProceduralShape) ?? { primitives: [] };
+    const pal = (sceneAsset.metadata.palette ?? {}) as Record<string, string>;
+    if (hasSceneLayers(shape)) for (const l of ["background", "midground", "foreground"] as const) drawSceneLayer(ctx as never, shape, pal, { time: t }, l);
+    else drawShape(ctx as never, shape, pal, { time: t });
+  } else { ctx.fillStyle = "#20232c"; ctx.fillRect(0, 0, 1280, 720); }
+  for (const ch of st.characters) {
+    const a = m.assetsById.get(ch.assetId);
+    if (!a) continue;
+    const m3d = (a.metadata as { model3d?: { spec?: unknown; gltf?: string; rim: string; tint?: string } }).model3d;
+    let drew3D = false;
+    if (m3d && (m.render3D || m.renderGltf)) {
+      try {
+        const RW = 360, RH = 620;
+        const yaw = YAW[ch.angle] ?? 0;
+        let im: CanvasImageSource | undefined;
+        if (m3d.gltf && m.renderGltf) im = m.renderGltf({ path: m3d.gltf, yaw, time: t, W: RW, H: RH, rim: m3d.rim, tint: m3d.tint });
+        else if (m3d.spec && m.render3D) im = m.render3D({ spec: m3d.spec, yaw, action: ch.action ?? "idle", time: t, W: RW, H: RH, rim: m3d.rim });
+        if (im) {
+          const s = (610 * ch.scale) / RH;
+          ctx.drawImage(im, ch.x - (RW * s) / 2, ch.y - RH * s + 14 * ch.scale, RW * s, RH * s);
+          drew3D = true;
+        }
+      } catch { /* no GL → 2D fallback */ }
+    }
+    if (!drew3D) {
+      drawCharacter(ctx as never, a, {
+        x: ch.x, y: ch.y, scale: ch.scale, expression: ch.expression, action: ch.action ?? "idle",
+        time: t, angle: ch.angle, viseme: ch.viseme, z: ch.z, headYaw: ch.headYaw, headPitch: ch.headPitch,
+      });
+    }
+  }
+  for (const fx of st.effects) {
+    const a = m.assetsById.get(fx.effectId);
+    if (!a) continue;
+    const shape = (a.metadata.shape as ProceduralShape) ?? { primitives: [] };
+    const pal = (a.metadata.palette ?? {}) as Record<string, string>;
+    ctx.save();
+    ctx.translate(fx.x, fx.y);
+    drawShape(ctx as never, shape, pal, { progress: fx.progress, time: t });
+    ctx.restore();
+  }
+}
+
 async function renderFilmstrip(projectPath: string, out: string) {
   const project = load<Parameters<typeof evaluateTimeline>[0]>(projectPath);
   const libPath = arg("library");
@@ -183,12 +250,7 @@ async function renderFilmstrip(projectPath: string, out: string) {
   const canvas = createCanvas(fw * cols, fh * rows);
   const ctx = canvas.getContext("2d") as unknown as Ctx;
 
-  // Load the 3D renderer only if some character carries a model3d spec.
-  const wants3D = [...assetsById.values()].some((a) => (a.metadata as { model3d?: unknown }).model3d);
-  let render3D: undefined | ((o: { spec: unknown; yaw: number; action: string; time: number; W: number; H: number; rim: string }) => { width: number; height: number });
-  if (wants3D) {
-    ({ renderCharacter3D: render3D } = (await import("./lib/character3d.mjs")) as never);
-  }
+  const { render3D, renderGltf } = await load3D(assetsById);
 
   for (let i = 0; i < n; i++) {
     const t = explicitTimes ? explicitTimes[i] : (dur * i) / Math.max(n - 1, 1);
@@ -198,52 +260,93 @@ async function renderFilmstrip(projectPath: string, out: string) {
     ctx.beginPath(); ctx.rect(ox, oy, fw, fh); ctx.clip();
     ctx.translate(ox, oy);
     ctx.scale(fw / 1280, fh / 720);
-    // scene
-    const sceneAsset = scenesById.get(st.sceneId);
-    if (sceneAsset) {
-      const shape = (sceneAsset.metadata.shape as ProceduralShape) ?? { primitives: [] };
-      const pal = (sceneAsset.metadata.palette ?? {}) as Record<string, string>;
-      if (hasSceneLayers(shape)) for (const l of ["background", "midground", "foreground"] as const) drawSceneLayer(ctx as never, shape, pal, { time: t }, l);
-      else drawShape(ctx as never, shape, pal, { time: t });
-    } else { ctx.fillStyle = "#20232c"; ctx.fillRect(0, 0, 1280, 720); }
-    // characters
-    for (const ch of st.characters) {
-      const a = assetsById.get(ch.assetId);
-      if (!a) continue;
-      const m3d = (a.metadata as { model3d?: { spec: unknown; rim: string } }).model3d;
-      let drew3D = false;
-      if (m3d && render3D) {
-        try {
-          // genuine 3D: render the posable cel-shaded humanoid at this facing/pose
-          const RW = 360, RH = 620;
-          const im = render3D({ spec: m3d.spec, yaw: YAW[ch.angle] ?? 0, action: ch.action ?? "idle", time: t, W: RW, H: RH, rim: m3d.rim });
-          const s = (610 * ch.scale) / RH;
-          ctx.drawImage(im as unknown as CanvasImageSource, ch.x - (RW * s) / 2, ch.y - RH * s + 14 * ch.scale, RW * s, RH * s);
-          drew3D = true;
-        } catch { /* no GL (not under xvfb) → fall back to 2D below */ }
-      }
-      if (!drew3D) {
-        drawCharacter(ctx as never, a, {
-          x: ch.x, y: ch.y, scale: ch.scale, expression: ch.expression, action: ch.action ?? "idle",
-          time: t, angle: ch.angle, viseme: ch.viseme, z: ch.z, headYaw: ch.headYaw, headPitch: ch.headPitch,
-        });
-      }
-    }
-    // effects (drawn over characters, at their world position)
-    for (const fx of st.effects) {
-      const a = assetsById.get(fx.effectId);
-      if (!a) continue;
-      const shape = (a.metadata.shape as ProceduralShape) ?? { primitives: [] };
-      const pal = (a.metadata.palette ?? {}) as Record<string, string>;
-      ctx.save();
-      ctx.translate(fx.x, fx.y);
-      drawShape(ctx as never, shape, pal, { progress: fx.progress, time: t });
-      ctx.restore();
-    }
+    composeWorld(ctx, st, t, { assetsById, scenesById, render3D, renderGltf });
     ctx.restore();
     label(ctx, `t=${t.toFixed(1)}s ${st.caption ? "· " + st.caption.slice(0, 18) : ""}`, ox, oy);
   }
   save(canvas, out);
+}
+
+function drawSubtitle(ctx: Ctx, st: ReturnType<typeof evaluateTimeline>, W: number, H: number) {
+  const text = st.caption;
+  if (!text) return;
+  const style = (st.captionStyle ?? {}) as { position?: string; color?: string; bgColor?: string; fontSize?: number; weight?: string | number };
+  const fontSize = style.fontSize ?? 30;
+  const weight = style.weight ?? "bold";
+  ctx.save();
+  ctx.font = `${weight} ${fontSize}px sans-serif`;
+  ctx.textAlign = "center";
+  const y = style.position === "top" ? 72 : style.position === "center" ? H / 2 : H - 52;
+  const tw = ctx.measureText(text).width;
+  ctx.fillStyle = style.bgColor ?? "rgba(8,6,12,0.6)";
+  ctx.fillRect(W / 2 - tw / 2 - 20, y - fontSize, tw + 40, fontSize + 20);
+  ctx.fillStyle = style.color ?? "#ffffff";
+  ctx.fillText(text, W / 2, y + 4);
+  ctx.restore();
+}
+
+function applyPostFX(ctx: Ctx, W: number, H: number, cfg: { enabled?: boolean; vignette?: number; noiseAlpha?: number }) {
+  if (cfg.enabled === false) return;
+  const vig = cfg.vignette ?? 0.34;
+  if (vig > 0) {
+    const g = ctx.createRadialGradient(W / 2, H / 2, H * 0.32, W / 2, H / 2, H * 0.8);
+    g.addColorStop(0, "rgba(0,0,0,0)");
+    g.addColorStop(1, `rgba(0,0,0,${vig})`);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  const na = cfg.noiseAlpha ?? 0.07;
+  if (na > 0) {
+    ctx.save();
+    ctx.globalAlpha = na;
+    ctx.fillStyle = "#ffffff";
+    for (let i = 0; i < 2600; i++) ctx.fillRect((Math.random() * W) | 0, (Math.random() * H) | 0, 1, 1);
+    ctx.restore();
+  }
+}
+
+async function renderVideo(projectPath: string, out: string) {
+  const project = load<Parameters<typeof evaluateTimeline>[0]>(projectPath);
+  const library = load<Parameters<typeof evaluateTimeline>[1]>(arg("library")!);
+  const assetsById = new Map<string, AssetManifest>();
+  for (const a of [...(library as { globalAssets: AssetManifest[] }).globalAssets, ...(library as { projectAssets: AssetManifest[] }).projectAssets]) assetsById.set(a.assetId, a);
+  const scenesById = new Map<string, AssetManifest>();
+  for (const s of (library as { scenes?: AssetManifest[] }).scenes ?? []) scenesById.set((s as unknown as { sceneId: string }).sceneId, s);
+  await preloadSprites([...assetsById.values()]);
+  const { render3D, renderGltf } = await load3D(assetsById);
+
+  const W = 1280, H = 720;
+  const fps = Number(arg("fps", "24"));
+  const dur = Number(arg("duration", "30"));
+  const N = Math.round(dur * fps);
+  const postFX = ((project as { config?: { postFX?: Record<string, number> } }).config?.postFX) ?? {};
+  const frameDir = "/tmp/qc/frames";
+  rmSync(frameDir, { recursive: true, force: true });
+  mkdirSync(frameDir, { recursive: true });
+
+  for (let f = 0; f < N; f++) {
+    const t = f / fps;
+    const st = evaluateTimeline(project, library, t);
+    const canvas = createCanvas(W, H);
+    const ctx = canvas.getContext("2d") as unknown as Ctx;
+    ctx.fillStyle = "#08080c"; ctx.fillRect(0, 0, W, H);
+    const cam = st.camera as { x: number; y: number; zoom: number };
+    const zoom = cam.zoom || 1;
+    ctx.save();
+    ctx.translate(W / 2, H / 2); ctx.scale(zoom, zoom); ctx.translate(-(cam.x ?? 640), -(cam.y ?? 360));
+    composeWorld(ctx, st, t, { assetsById, scenesById, render3D, renderGltf });
+    ctx.restore();
+    drawSubtitle(ctx, st, W, H);
+    applyPostFX(ctx, W, H, postFX);
+    writeFileSync(`${frameDir}/${String(f).padStart(5, "0")}.png`, canvas.toBuffer("image/png"));
+    if (f % 60 === 0) console.log(`  frame ${f}/${N}`);
+  }
+
+  const ff = ((await import("@ffmpeg-installer/ffmpeg")) as { default: { path: string } }).default.path;
+  mkdirSync(dirname(out), { recursive: true });
+  spawnSync(ff, ["-y", "-framerate", String(fps), "-i", `${frameDir}/%05d.png`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", out], { stdio: "ignore" });
+  const gif = out.replace(/\.mp4$/, ".gif");
+  spawnSync(ff, ["-y", "-framerate", String(fps), "-i", `${frameDir}/%05d.png`, "-vf", "fps=12,scale=720:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse", "-loop", "0", gif], { stdio: "ignore" });
+  console.log(`wrote ${out} (${N} frames @ ${fps}fps) + ${gif}`);
 }
 
 async function main() {
@@ -256,6 +359,10 @@ async function main() {
       await preloadSprites([...(lib.globalAssets ?? []), ...(lib.projectAssets ?? [])]);
     }
     await renderFilmstrip(arg("project")!, out);
+    return;
+  }
+  if (kind === "video") {
+    await renderVideo(arg("project")!, out);
     return;
   }
   const asset = load<AssetManifest>(arg("file")!);

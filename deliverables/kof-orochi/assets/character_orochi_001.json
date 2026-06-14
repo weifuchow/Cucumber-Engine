@@ -398,12 +398,14 @@
     },
     "model3d": {
       "spec": {
-        "coat": "#bd9476",
+        "coat": "#b0855f",
         "skin": "#e6cdb8",
-        "hair": "#dfe3ee",
-        "pants": "#cfd0db",
-        "shoe": "#5e4c3e",
-        "spikes": 0
+        "hair": "#e2e6f0",
+        "pants": "#c6c7d2",
+        "shoe": "#574636",
+        "spikes": 0,
+        "harness": true,
+        "band": "#1c2742"
       },
       "rim": "#7cf2c0"
     }

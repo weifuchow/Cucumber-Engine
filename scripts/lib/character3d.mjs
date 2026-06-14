@@ -52,6 +52,16 @@ function buildRig(spec) {
   const torso = capsule(0.42, 0.9, coat); torso.position.y = 1.15; torso.scale.set(1, 1, 0.7); root.add(torso);
   // hips
   const hips = capsule(0.36, 0.3, pants); hips.position.y = 0.7; hips.scale.set(1, 1, 0.7); root.add(hips);
+  // optional harness — Orochi's dark X-straps across the bare torso
+  if (spec.harness) {
+    const band = toon(spec.band ?? "#1c2540");
+    for (const rot of [0.6, -0.6]) {
+      const strap = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.3, 0.06), band);
+      strap.position.set(0, 1.15, 0.32); strap.rotation.z = rot; root.add(strap);
+    }
+    const belt = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.05, 8, 24), band);
+    belt.position.y = 0.82; belt.rotation.x = Math.PI / 2; belt.scale.set(1, 0.7, 1); root.add(belt);
+  }
   // neck + head
   const neck = capsule(0.12, 0.14, skin); neck.position.y = 1.66; root.add(neck);
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 20, 20), skin); head.position.y = 1.95; head.scale.set(0.9, 1.05, 0.9); root.add(head);
@@ -59,10 +69,10 @@ function buildRig(spec) {
   const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.34, 18, 18, 0, Math.PI * 2, 0, Math.PI * 0.62), hair);
   hairCap.position.y = 2.0; root.add(hairCap);
   for (let i = 0; i < (spec.spikes ?? 0); i++) {
-    const s = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.34, 6), hair);
+    const s = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.52, 6), hair);
     const a = (i / (spec.spikes)) * Math.PI * 2;
-    s.position.set(Math.cos(a) * 0.16, 2.18, Math.sin(a) * 0.12);
-    s.rotation.set(0.5 * Math.sin(a), 0, -0.4 * Math.cos(a));
+    s.position.set(Math.cos(a) * 0.2, 2.24, Math.sin(a) * 0.16);
+    s.rotation.set(0.6 * Math.sin(a), 0, -0.5 * Math.cos(a));
     root.add(s);
   }
 
