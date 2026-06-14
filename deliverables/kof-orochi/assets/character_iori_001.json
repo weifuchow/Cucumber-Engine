@@ -5,37 +5,36 @@
   "type": "character",
   "scope": "project",
   "source": {
-    "kind": "generated",
-    "format": "raster-bake",
-    "originalFile": "built-in"
+    "kind": "imported",
+    "format": "raster-art",
+    "originalFile": "iori_sheet_ref.png"
   },
   "files": {
     "preview": "procedural://character_iori_001"
   },
   "tags": [
-    "character",
-    "procedural",
     "kof",
     "iori",
-    "fighter",
-    "painterly",
+    "character",
     "raster",
-    "baked"
+    "real-art"
   ],
   "metadata": {
-    "width": 260,
+    "width": 360,
     "height": 520,
     "anchor": {
-      "x": 130,
-      "y": 500
-    },
-    "palette": {
-      "body": "#7a1622",
-      "skin": "#e7b892",
-      "hair": "#c8202a",
-      "pants": "#15121a"
+      "x": 180,
+      "y": 520
     },
     "displayName": "庵",
+    "views": [
+      "front",
+      "back",
+      "sideLeft",
+      "sideRight",
+      "threeQuarterLeft",
+      "threeQuarterRight"
+    ],
     "actions": [
       "idle",
       "walking",
@@ -45,106 +44,65 @@
     ],
     "expressions": [
       "neutral",
-      "happy",
-      "sad",
       "angry",
-      "surprised",
-      "soft",
-      "scared",
       "smug",
-      "embarrassed",
-      "thinking",
-      "crying",
-      "laughing"
+      "surprised",
+      "scared",
+      "crying"
     ],
-    "views": [
-      "front",
-      "back",
-      "sideLeft",
-      "sideRight"
+    "palette": {},
+    "references": [
+      {
+        "sourceType": "user-upload",
+        "source": "iori_sheet_ref.png",
+        "note": "official-style KOF turnaround art provided by user; cut + keyed into imageSprite frames"
+      }
     ],
     "shape": {
       "primitives": [
         {
           "kind": "ellipse",
           "cx": 0,
-          "cy": 6,
-          "rx": "92 * (1 - clamp(z * 0.0008, 0, 0.35))",
-          "ry": "24 * (1 - clamp(z * 0.0008, 0, 0.35))",
+          "cy": 4,
+          "rx": "120 * (1 - clamp(z * 0.0008, 0, 0.35))",
+          "ry": "26 * (1 - clamp(z * 0.0008, 0, 0.35))",
           "fill": {
             "gradient": "radial",
             "x0": 0,
-            "y0": 6,
+            "y0": 4,
             "r0": 0,
             "x1": 0,
-            "y1": 6,
-            "r1": 92,
+            "y1": 4,
+            "r1": 120,
             "stops": [
               {
                 "at": 0,
-                "color": "rgba(12,10,14,${0.34 * (1 - clamp(z * 0.0008, 0, 0.6))})"
+                "color": "rgba(10,8,12,${0.4 * (1 - clamp(z * 0.0008, 0, 0.6))})"
               },
               {
                 "at": 1,
-                "color": "rgba(12,10,14,0)"
+                "color": "rgba(10,8,12,0)"
               }
             ]
           }
         },
         {
           "kind": "imageSprite",
-          "when": "action not in [walking, attack, defend, victory]",
-          "src": "deliverables/kof-orochi/sprites/character_iori_001/front/idle/{frame}.png",
-          "frames": 5,
-          "fps": 12,
-          "w": 320,
-          "h": 560,
-          "anchorX": 0.5,
-          "anchorY": 0.95
-        },
-        {
-          "kind": "imageSprite",
-          "when": "action == walking",
-          "src": "deliverables/kof-orochi/sprites/character_iori_001/front/walking/{frame}.png",
-          "frames": 5,
-          "fps": 12,
-          "w": 320,
-          "h": 560,
-          "anchorX": 0.5,
-          "anchorY": 0.95
-        },
-        {
-          "kind": "imageSprite",
           "when": "action == attack",
-          "src": "deliverables/kof-orochi/sprites/character_iori_001/front/attack/{frame}.png",
-          "frames": 5,
-          "fps": 12,
-          "w": 320,
-          "h": 560,
+          "src": "deliverables/kof-orochi/art/iori/action_R.png",
+          "w": 246,
+          "h": 520,
           "anchorX": 0.5,
-          "anchorY": 0.95
+          "anchorY": 1
         },
         {
           "kind": "imageSprite",
-          "when": "action == defend",
-          "src": "deliverables/kof-orochi/sprites/character_iori_001/front/defend/{frame}.png",
-          "frames": 5,
-          "fps": 12,
-          "w": 320,
-          "h": 560,
+          "when": "action != attack",
+          "src": "deliverables/kof-orochi/art/iori/front_R.png",
+          "w": 181,
+          "h": 520,
           "anchorX": 0.5,
-          "anchorY": 0.95
-        },
-        {
-          "kind": "imageSprite",
-          "when": "action == victory",
-          "src": "deliverables/kof-orochi/sprites/character_iori_001/front/victory/{frame}.png",
-          "frames": 5,
-          "fps": 12,
-          "w": 320,
-          "h": 560,
-          "anchorX": 0.5,
-          "anchorY": 0.95
+          "anchorY": 1
         }
       ]
     },
@@ -154,83 +112,46 @@
           {
             "kind": "ellipse",
             "cx": 0,
-            "cy": 6,
-            "rx": "92 * (1 - clamp(z * 0.0008, 0, 0.35))",
-            "ry": "24 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "cy": 4,
+            "rx": "120 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "ry": "26 * (1 - clamp(z * 0.0008, 0, 0.35))",
             "fill": {
               "gradient": "radial",
               "x0": 0,
-              "y0": 6,
+              "y0": 4,
               "r0": 0,
               "x1": 0,
-              "y1": 6,
-              "r1": 92,
+              "y1": 4,
+              "r1": 120,
               "stops": [
                 {
                   "at": 0,
-                  "color": "rgba(12,10,14,${0.34 * (1 - clamp(z * 0.0008, 0, 0.6))})"
+                  "color": "rgba(10,8,12,${0.4 * (1 - clamp(z * 0.0008, 0, 0.6))})"
                 },
                 {
                   "at": 1,
-                  "color": "rgba(12,10,14,0)"
+                  "color": "rgba(10,8,12,0)"
                 }
               ]
             }
           },
           {
             "kind": "imageSprite",
-            "when": "action not in [walking, attack, defend, victory]",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/front/idle/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
-            "anchorX": 0.5,
-            "anchorY": 0.95
-          },
-          {
-            "kind": "imageSprite",
-            "when": "action == walking",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/front/walking/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
-            "anchorX": 0.5,
-            "anchorY": 0.95
-          },
-          {
-            "kind": "imageSprite",
             "when": "action == attack",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/front/attack/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "src": "deliverables/kof-orochi/art/iori/action_R.png",
+            "w": 246,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
           },
           {
             "kind": "imageSprite",
-            "when": "action == defend",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/front/defend/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "when": "action != attack",
+            "src": "deliverables/kof-orochi/art/iori/front_R.png",
+            "w": 181,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
-          },
-          {
-            "kind": "imageSprite",
-            "when": "action == victory",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/front/victory/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
-            "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
           }
         ]
       },
@@ -239,168 +160,142 @@
           {
             "kind": "ellipse",
             "cx": 0,
-            "cy": 6,
-            "rx": "92 * (1 - clamp(z * 0.0008, 0, 0.35))",
-            "ry": "24 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "cy": 4,
+            "rx": "120 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "ry": "26 * (1 - clamp(z * 0.0008, 0, 0.35))",
             "fill": {
               "gradient": "radial",
               "x0": 0,
-              "y0": 6,
+              "y0": 4,
               "r0": 0,
               "x1": 0,
-              "y1": 6,
-              "r1": 92,
+              "y1": 4,
+              "r1": 120,
               "stops": [
                 {
                   "at": 0,
-                  "color": "rgba(12,10,14,${0.34 * (1 - clamp(z * 0.0008, 0, 0.6))})"
+                  "color": "rgba(10,8,12,${0.4 * (1 - clamp(z * 0.0008, 0, 0.6))})"
                 },
                 {
                   "at": 1,
-                  "color": "rgba(12,10,14,0)"
+                  "color": "rgba(10,8,12,0)"
                 }
               ]
             }
           },
           {
             "kind": "imageSprite",
-            "when": "action not in [walking, attack, defend, victory]",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/back/idle/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
-            "anchorX": 0.5,
-            "anchorY": 0.95
-          },
-          {
-            "kind": "imageSprite",
-            "when": "action == walking",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/back/walking/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
-            "anchorX": 0.5,
-            "anchorY": 0.95
-          },
-          {
-            "kind": "imageSprite",
             "when": "action == attack",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/back/attack/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "src": "deliverables/kof-orochi/art/iori/action_R.png",
+            "w": 246,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
           },
           {
             "kind": "imageSprite",
-            "when": "action == defend",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/back/defend/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "when": "action != attack",
+            "src": "deliverables/kof-orochi/art/iori/back_R.png",
+            "w": 191,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
-          },
-          {
-            "kind": "imageSprite",
-            "when": "action == victory",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/back/victory/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
-            "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
           }
         ]
       },
-      "sideLeft": {
+      "threeQuarterRight": {
         "primitives": [
           {
             "kind": "ellipse",
             "cx": 0,
-            "cy": 6,
-            "rx": "92 * (1 - clamp(z * 0.0008, 0, 0.35))",
-            "ry": "24 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "cy": 4,
+            "rx": "120 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "ry": "26 * (1 - clamp(z * 0.0008, 0, 0.35))",
             "fill": {
               "gradient": "radial",
               "x0": 0,
-              "y0": 6,
+              "y0": 4,
               "r0": 0,
               "x1": 0,
-              "y1": 6,
-              "r1": 92,
+              "y1": 4,
+              "r1": 120,
               "stops": [
                 {
                   "at": 0,
-                  "color": "rgba(12,10,14,${0.34 * (1 - clamp(z * 0.0008, 0, 0.6))})"
+                  "color": "rgba(10,8,12,${0.4 * (1 - clamp(z * 0.0008, 0, 0.6))})"
                 },
                 {
                   "at": 1,
-                  "color": "rgba(12,10,14,0)"
+                  "color": "rgba(10,8,12,0)"
                 }
               ]
             }
           },
           {
             "kind": "imageSprite",
-            "when": "action not in [walking, attack, defend, victory]",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/sideLeft/idle/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "when": "action == attack",
+            "src": "deliverables/kof-orochi/art/iori/action_R.png",
+            "w": 246,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
           },
           {
             "kind": "imageSprite",
-            "when": "action == walking",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/sideLeft/walking/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "when": "action != attack",
+            "src": "deliverables/kof-orochi/art/iori/threeq_R.png",
+            "w": 173,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
+          }
+        ]
+      },
+      "threeQuarterLeft": {
+        "primitives": [
+          {
+            "kind": "ellipse",
+            "cx": 0,
+            "cy": 4,
+            "rx": "120 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "ry": "26 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "fill": {
+              "gradient": "radial",
+              "x0": 0,
+              "y0": 4,
+              "r0": 0,
+              "x1": 0,
+              "y1": 4,
+              "r1": 120,
+              "stops": [
+                {
+                  "at": 0,
+                  "color": "rgba(10,8,12,${0.4 * (1 - clamp(z * 0.0008, 0, 0.6))})"
+                },
+                {
+                  "at": 1,
+                  "color": "rgba(10,8,12,0)"
+                }
+              ]
+            }
           },
           {
             "kind": "imageSprite",
             "when": "action == attack",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/sideLeft/attack/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "src": "deliverables/kof-orochi/art/iori/action_L.png",
+            "w": 246,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
           },
           {
             "kind": "imageSprite",
-            "when": "action == defend",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/sideLeft/defend/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "when": "action != attack",
+            "src": "deliverables/kof-orochi/art/iori/threeq_L.png",
+            "w": 173,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
-          },
-          {
-            "kind": "imageSprite",
-            "when": "action == victory",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/sideLeft/victory/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
-            "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
           }
         ]
       },
@@ -409,101 +304,104 @@
           {
             "kind": "ellipse",
             "cx": 0,
-            "cy": 6,
-            "rx": "92 * (1 - clamp(z * 0.0008, 0, 0.35))",
-            "ry": "24 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "cy": 4,
+            "rx": "120 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "ry": "26 * (1 - clamp(z * 0.0008, 0, 0.35))",
             "fill": {
               "gradient": "radial",
               "x0": 0,
-              "y0": 6,
+              "y0": 4,
               "r0": 0,
               "x1": 0,
-              "y1": 6,
-              "r1": 92,
+              "y1": 4,
+              "r1": 120,
               "stops": [
                 {
                   "at": 0,
-                  "color": "rgba(12,10,14,${0.34 * (1 - clamp(z * 0.0008, 0, 0.6))})"
+                  "color": "rgba(10,8,12,${0.4 * (1 - clamp(z * 0.0008, 0, 0.6))})"
                 },
                 {
                   "at": 1,
-                  "color": "rgba(12,10,14,0)"
+                  "color": "rgba(10,8,12,0)"
                 }
               ]
             }
           },
           {
             "kind": "imageSprite",
-            "when": "action not in [walking, attack, defend, victory]",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/sideRight/idle/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "when": "action == attack",
+            "src": "deliverables/kof-orochi/art/iori/action_R.png",
+            "w": 246,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
           },
           {
             "kind": "imageSprite",
-            "when": "action == walking",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/sideRight/walking/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "when": "action != attack",
+            "src": "deliverables/kof-orochi/art/iori/side_R.png",
+            "w": 161,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
+          }
+        ]
+      },
+      "sideLeft": {
+        "primitives": [
+          {
+            "kind": "ellipse",
+            "cx": 0,
+            "cy": 4,
+            "rx": "120 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "ry": "26 * (1 - clamp(z * 0.0008, 0, 0.35))",
+            "fill": {
+              "gradient": "radial",
+              "x0": 0,
+              "y0": 4,
+              "r0": 0,
+              "x1": 0,
+              "y1": 4,
+              "r1": 120,
+              "stops": [
+                {
+                  "at": 0,
+                  "color": "rgba(10,8,12,${0.4 * (1 - clamp(z * 0.0008, 0, 0.6))})"
+                },
+                {
+                  "at": 1,
+                  "color": "rgba(10,8,12,0)"
+                }
+              ]
+            }
           },
           {
             "kind": "imageSprite",
             "when": "action == attack",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/sideRight/attack/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "src": "deliverables/kof-orochi/art/iori/action_L.png",
+            "w": 246,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
           },
           {
             "kind": "imageSprite",
-            "when": "action == defend",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/sideRight/defend/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
+            "when": "action != attack",
+            "src": "deliverables/kof-orochi/art/iori/side_L.png",
+            "w": 161,
+            "h": 520,
             "anchorX": 0.5,
-            "anchorY": 0.95
-          },
-          {
-            "kind": "imageSprite",
-            "when": "action == victory",
-            "src": "deliverables/kof-orochi/sprites/character_iori_001/sideRight/victory/{frame}.png",
-            "frames": 5,
-            "fps": 12,
-            "w": 320,
-            "h": 560,
-            "anchorX": 0.5,
-            "anchorY": 0.95
+            "anchorY": 1
           }
         ]
       }
-    },
-    "references": [
-      {
-        "sourceType": "web",
-        "source": "https://snk.fandom.com/wiki/Iori_Yagami",
-        "note": "painterly v3: softened outlines, wild brush hair, cel shadows"
-      }
-    ],
-    "builtBy": "scripts/build-character-shape.ts"
+    }
   },
   "license": {
-    "type": "internal-generated",
-    "author": "Cucumber Engine",
+    "type": "user-provided",
+    "author": "user upload",
     "sourceUrl": "",
-    "commercialUse": true,
-    "needAttribution": false
+    "commercialUse": false,
+    "needAttribution": true
   }
 }

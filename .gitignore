@@ -10,3 +10,5 @@ vite.config.d.ts
 
 # Baked sprite frames (regenerable via deliverables/*/build/build-all.sh)
 deliverables/**/sprites/
+# Raw user-provided reference sheets (heavy source uploads; art/ cutouts are committed)
+deliverables/**/references/

@@ -67,23 +67,28 @@ The timeline leans on the engine's motion layer: `characterMove` uses
 (front via ¾); every standing beat carries the automatic per-character idle
 breath. Iori's flames rim purple, Orochi's energy rims green — readable sides.
 
-## Raster route (off the vector/Flash plane)
+## Real painted art (off the vector/Flash plane)
 
-The characters are **baked raster sprites**, not live procedural shapes. The
-procedural figures (built via the skill) are rendered through
-`scripts/bake-character-sprites.ts` into bitmap frames
-(`sprites/<id>/<view>/<action>/{frame}.png`) and the manifest's
-`metadata.shapes[view]` use the new engine **`imageSprite`** primitive
-(`src/engine/proceduralShape.ts`). The bake does raster-only work the vector
-primitives can't: 3× supersample → soft anti-aliased edges (kills the crisp
-vector line), per-pixel paper-grain multiply, and a silhouette ink-edge darken.
+The characters are **real painted KOF turnaround art** (user-provided), not
+procedural shapes. `build/cut-all.mjs` crops each view (front / ¾ / side / back
+/ action) out of `references/<char>_sheet_ref.png`, removes the sheet
+background by edge flood-fill keyed to the brightest border colour (robust to a
+crop corner landing on the figure), mirrors for left-facing, and wires the
+frames into the engine's **`imageSprite`** primitive
+(`src/engine/proceduralShape.ts`). Iori faces right, Orochi faces left; `attack`
+swaps to the dynamic action pose.
 
-`sprites/` is git-ignored (regenerable) — `build-all.sh` bakes it. The engine
-`imageSprite` primitive is general: the moment genuinely **painted or
-AI-generated** frames exist, they drop into the same `shapes[view]` slots with
-no further engine change — that is the true escape from the vector look (the
-re-rasterized procedural art here is the best achievable without an external
-paint/image source).
+This is the genuine escape from the vector look — the engine composites real
+illustration over the procedural scene/effects. `imageSprite` is general; any
+painted/generated frames drop into `shapes[view]` with no engine change.
+
+- `art/` (cut frames) **is committed** — rendering works out of the box.
+- `references/` (the raw upload sheets, ~14 MB) is git-ignored; needed only to
+  re-cut via `build-all.sh`.
+
+The earlier procedural-then-raster bake path (`scripts/bake-character-sprites.ts`
++ painterly v3) still exists as the engine's general capability and as the
+fallback when no painted source art is available.
 
 ## Notes / honest caveats
 
