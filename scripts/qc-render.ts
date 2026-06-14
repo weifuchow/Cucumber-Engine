@@ -165,7 +165,7 @@ const YAW: Record<string, number> = {
 };
 
 type Render3D = (o: { spec: unknown; yaw: number; action: string; time: number; W: number; H: number; rim: string }) => CanvasImageSource;
-type RenderGltf = (o: { path: string; yaw: number; time: number; W: number; H: number; rim: string; tint?: string }) => CanvasImageSource;
+type RenderGltf = (o: { path: string; yaw: number; time: number; W: number; H: number; rim: string; tint?: string; clip?: string; colorMul?: [number, number, number] }) => CanvasImageSource;
 interface WorldMaps { assetsById: Map<string, AssetManifest>; scenesById: Map<string, AssetManifest>; render3D?: Render3D; renderGltf?: RenderGltf }
 
 // Load whichever 3D backends the library needs: the procedural humanoid
@@ -195,15 +195,16 @@ function composeWorld(ctx: Ctx, st: ReturnType<typeof evaluateTimeline>, t: numb
   for (const ch of st.characters) {
     const a = m.assetsById.get(ch.assetId);
     if (!a) continue;
-    const m3d = (a.metadata as { model3d?: { spec?: unknown; gltf?: string; rim: string; tint?: string } }).model3d;
+    const m3d = (a.metadata as { model3d?: { spec?: unknown; gltf?: string; rim: string; tint?: string; colorMul?: [number, number, number]; clipMap?: Record<string, string> } }).model3d;
     let drew3D = false;
     if (m3d && (m.render3D || m.renderGltf)) {
       try {
         const RW = 360, RH = 620;
         const yaw = YAW[ch.angle] ?? 0;
+        const action = ch.action ?? "idle";
         let im: CanvasImageSource | undefined;
-        if (m3d.gltf && m.renderGltf) im = m.renderGltf({ path: m3d.gltf, yaw, time: t, W: RW, H: RH, rim: m3d.rim, tint: m3d.tint });
-        else if (m3d.spec && m.render3D) im = m.render3D({ spec: m3d.spec, yaw, action: ch.action ?? "idle", time: t, W: RW, H: RH, rim: m3d.rim });
+        if (m3d.gltf && m.renderGltf) im = m.renderGltf({ path: m3d.gltf, yaw, time: t, W: RW, H: RH, rim: m3d.rim, tint: m3d.tint, colorMul: m3d.colorMul, clip: m3d.clipMap?.[action] ?? m3d.clipMap?.idle });
+        else if (m3d.spec && m.render3D) im = m.render3D({ spec: m3d.spec, yaw, action, time: t, W: RW, H: RH, rim: m3d.rim });
         if (im) {
           const s = (610 * ch.scale) / RH;
           ctx.drawImage(im, ch.x - (RW * s) / 2, ch.y - RH * s + 14 * ch.scale, RW * s, RH * s);

@@ -65,9 +65,15 @@ async function viewShape(char, stand, actionFile) {
   ] };
 }
 
+// High-poly rigged glTF (three.js RobotExpressive — vertex-coloured, with
+// Idle/Walking/Punch/… clips). One model fields both fighters via colorMul.
+const ROBOT = "deliverables/kof-orochi/models/RobotExpressive.glb";
+const CLIPMAP = { idle: "Idle", walking: "Walking", attack: "Punch", defend: "Idle", victory: "ThumbsUp" };
 const MODEL3D = {
-  iori:   { spec: { coat: "#7a1622", skin: "#e7b892", hair: "#c8202a", pants: "#1a1620", shoe: "#0e0c12", spikes: 9 }, rim: "#b076ff" },
-  orochi: { spec: { coat: "#b0855f", skin: "#e6cdb8", hair: "#e2e6f0", pants: "#c6c7d2", shoe: "#574636", spikes: 0, harness: true, band: "#1c2742" }, rim: "#7cf2c0" },
+  iori:   { gltf: ROBOT, colorMul: [1.15, 0.42, 0.4], clipMap: CLIPMAP, rim: "#b076ff",
+            spec: { coat: "#7a1622", skin: "#e7b892", hair: "#c8202a", pants: "#1a1620", shoe: "#0e0c12", spikes: 9 } },
+  orochi: { gltf: ROBOT, colorMul: [0.42, 0.95, 0.92], clipMap: CLIPMAP, rim: "#7cf2c0",
+            spec: { coat: "#b0855f", skin: "#e6cdb8", hair: "#e2e6f0", pants: "#c6c7d2", shoe: "#574636", spikes: 0, harness: true, band: "#1c2742" } },
 };
 
 async function buildManifest(char, baseId, name, display, faces /* 'R' | 'L' */) {

@@ -119,15 +119,23 @@ xvfb-run -a node --import tsx scripts/qc-render.ts --kind video \
   --duration 30 --fps 24 --out deliverables/kof-orochi/renders/fight_3d.mp4
 ```
 
-### High-fidelity glTF path (proven)
+### High-poly glTF fighters (the fight video uses these)
 `scripts/lib/gltf3d.mjs` loads + animates + renders any **rigged glTF/GLB**
-(three.js `GLTFLoader` + `AnimationMixer`, headless). Demo:
-`renders/gltf_demo.png` is `models/CesiumMan.glb` walking with its own skeletal
-clip across a turn. A character whose `metadata.model3d` is `{ "gltf": "x.glb" }`
-renders through this instead of the procedural humanoid — so an image→3D export
-(from `cucumber-3d-fetcher`: Tripo / Hunyuan3D / Meshy) drops in with no engine
-change. (Embedded GLB textures don't decode headlessly yet — models render
-untextured / tinted; a texture-decode polyfill is the follow-up.)
+(three.js `GLTFLoader` + `AnimationMixer`, headless). The fight now fields
+**three.js `RobotExpressive`** (`models/RobotExpressive.glb`) — a high-poly,
+vertex-coloured rigged character with Idle / Walking / **Punch** / ThumbsUp
+clips. One model fields both fighters via `model3d.colorMul` (red vs teal) with
+an action→clip map; framing fills ~88 % of the cell so characters read large,
+not as distant specks. `models/CesiumMan.glb` is the simpler walk demo
+(`renders/gltf_demo.png`).
+
+A character's `metadata.model3d` is `{ gltf, colorMul?, clipMap?, rim }` — so an
+**image→3D export of the real Iori/Orochi** (from `cucumber-3d-fetcher`: Tripo /
+Hunyuan3D / Meshy) drops straight in with no engine change; the procedural
+`spec` humanoid is the no-asset fallback. (Embedded GLB *textures* don't decode
+headlessly yet — vertex-coloured models like RobotExpressive look right;
+texture-mapped ones render untextured. A texture-decode polyfill is the
+follow-up.)
 
 **Honest scope:** these are *procedural low-poly* 3D figures (capsules/boxes,
 coloured per fighter) — they prove real 3D rotation/articulation but are not

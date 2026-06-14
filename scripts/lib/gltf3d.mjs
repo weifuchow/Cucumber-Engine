@@ -66,9 +66,16 @@ export function preloadGltf(path) {
       const size = box.getSize(new THREE.Vector3());
       const ctr = box.getCenter(new THREE.Vector3());
       model.position.sub(ctr); model.position.y += size.y / 2; // feet near 0
+      // cache each material's original colour so per-frame tinting can't compound
+      model.traverse((o) => {
+        if (!o.isMesh || !o.material) return;
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const mm of mats) if (mm.color && !mm.userData._orig) mm.userData._orig = mm.color.clone();
+      });
       const mixer = gltf.animations?.length ? new THREE.AnimationMixer(model) : null;
-      if (mixer) mixer.clipAction(gltf.animations[0]).play();
-      const entry = { model, mixer, height: size.y, clips: (gltf.animations ?? []).map((a) => a.name) };
+      const actions = new Map();
+      if (mixer) for (const clip of gltf.animations) actions.set(clip.name, mixer.clipAction(clip));
+      const entry = { model, mixer, actions, height: size.y, clips: (gltf.animations ?? []).map((a) => a.name) };
       _resolved.set(path, entry);
       res(entry);
     }, (e) => rej(new Error("glTF parse failed: " + (e?.message ?? e))));
@@ -77,25 +84,55 @@ export function preloadGltf(path) {
 
 export async function gltfClips(path) { return (await preloadGltf(path)).clips; }
 
+function applyClip(entry, clip, time) {
+  if (!entry.mixer || !entry.actions.size) return;
+  const name = entry.actions.has(clip) ? clip : entry.clips[0];
+  for (const [n, a] of entry.actions) {
+    const on = n === name;
+    a.enabled = on; a.setEffectiveWeight(on ? 1 : 0);
+    if (on) a.play();
+  }
+  entry.mixer.setTime(Math.max(0.0001, time));
+}
+
+function applyTint(entry, mul) {
+  entry.model.traverse((o) => {
+    if (!o.isMesh || !o.material) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const mm of mats) {
+      if (!mm.userData._orig) continue;
+      if (mul) mm.color.copy(mm.userData._orig).multiply(new THREE.Color(mul[0], mul[1], mul[2]));
+      else mm.color.copy(mm.userData._orig);
+    }
+  });
+}
+
 /**
- * Render one frame of a (preloaded) rigged glTF. yaw radians, time seconds
- * (drives the first animation clip). Returns a napi Canvas (transparent bg).
+ * Render one frame of a (preloaded) rigged glTF. yaw radians; `clip` selects an
+ * animation by name (default first); `time` drives it; `colorMul` [r,g,b]
+ * recolours while keeping material variation (two distinct fighters from one
+ * model). Framed to fill ~88% of the canvas height. Returns a napi Canvas.
  */
-export function renderGltf3D({ path, yaw = 0, time = 0, W = 360, H = 620, rim = "#b076ff", tint }) {
+export function renderGltf3D({ path, yaw = 0, clip, time = 0, W = 360, H = 620, rim = "#b076ff", colorMul, tint }) {
   const renderer = ensureRenderer(W, H);
   const entry = _resolved.get(path);
   if (!entry) throw new Error(`glTF not preloaded: ${path} (call preloadGltf first)`);
   const scene = new THREE.Scene();
   entry.model.rotation.y = yaw;
-  if (entry.mixer) { entry.mixer.setTime(0); entry.mixer.update(Math.max(0, time)); }
-  if (tint) entry.model.traverse((o) => { if (o.isMesh && o.material) { o.material.color = new THREE.Color(tint); o.material.map = null; } });
+  applyClip(entry, clip, time);
+  applyTint(entry, colorMul);
+  if (tint && !colorMul) entry.model.traverse((o) => { if (o.isMesh && o.material) { const m = Array.isArray(o.material) ? o.material : [o.material]; for (const mm of m) { mm.color = new THREE.Color(tint); mm.map = null; } } });
   scene.add(entry.model);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-  const key = new THREE.DirectionalLight(0xfff2e6, 1.15); key.position.set(2.5, 4, 3); scene.add(key);
-  const rl = new THREE.DirectionalLight(new THREE.Color(rim), 0.85); rl.position.set(-3, 2.2, -2.5); scene.add(rl);
-  const cam = new THREE.PerspectiveCamera(32, W / H, 0.1, 100);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const key = new THREE.DirectionalLight(0xfff2e6, 1.25); key.position.set(2.5, 4, 3); scene.add(key);
+  const rl = new THREE.DirectionalLight(new THREE.Color(rim), 0.95); rl.position.set(-3, 2.4, -2.5); scene.add(rl);
+  const fill = new THREE.DirectionalLight(0x8098c0, 0.4); fill.position.set(-2, 1, 3); scene.add(fill);
+  // frame to fill ~88% of the canvas height
   const hY = entry.height;
-  cam.position.set(0, hY * 0.52, hY * 2.3); cam.lookAt(0, hY * 0.46, 0);
+  const fov = 30;
+  const dist = (hY * 0.5 / Math.tan((fov * Math.PI / 180) / 2)) / 0.88;
+  const cam = new THREE.PerspectiveCamera(fov, W / H, 0.1, 100);
+  cam.position.set(0, hY * 0.5, dist); cam.lookAt(0, hY * 0.5, 0);
   renderer.render(scene, cam);
   scene.remove(entry.model); // reuse model next call
 

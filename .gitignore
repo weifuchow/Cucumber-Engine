@@ -12,3 +12,6 @@ vite.config.d.ts
 deliverables/**/sprites/
 # Raw user-provided reference sheets (heavy source uploads; art/ cutouts are committed)
 deliverables/**/references/
+
+# oversized full-res gif (use fight_3d.mp4 + fight_preview.gif)
+deliverables/**/renders/fight_3d.gif

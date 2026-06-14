@@ -397,6 +397,20 @@
       }
     },
     "model3d": {
+      "gltf": "deliverables/kof-orochi/models/RobotExpressive.glb",
+      "colorMul": [
+        0.42,
+        0.95,
+        0.92
+      ],
+      "clipMap": {
+        "idle": "Idle",
+        "walking": "Walking",
+        "attack": "Punch",
+        "defend": "Idle",
+        "victory": "ThumbsUp"
+      },
+      "rim": "#7cf2c0",
       "spec": {
         "coat": "#b0855f",
         "skin": "#e6cdb8",
@@ -406,8 +420,7 @@
         "spikes": 0,
         "harness": true,
         "band": "#1c2742"
-      },
-      "rim": "#7cf2c0"
+      }
     }
   },
   "license": {
